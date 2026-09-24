@@ -1,0 +1,11 @@
+{
+  "name": "Yatranew AI",
+  "description": "Next-generation spatial computing AI interview simulator called Naya AI.",
+  "requestFramePermissions": [
+    "microphone",
+    "xr-spatial-tracking"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

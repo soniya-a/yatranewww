@@ -1,0 +1,8 @@
+{
+  "firestore": [
+    {
+      "database": "ai-studio-aiinterviewplatf-a824a841-78a8-4c80-9a1c-34f58baf42a6",
+      "rules": "firestore.rules"
+    }
+  ]
+}

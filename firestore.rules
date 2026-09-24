@@ -1,0 +1,31 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // 1. Companies Collection - Predefined interview templates. Readable by anyone.
+    match /companies/{companyId} {
+      allow read: if true;
+      allow write: if isSignedIn();
+    }
+
+    // 2. Roadmaps Collection - User specific custom career roadmaps. Strictly isolated per user.
+    match /roadmaps/{roadmapId} {
+      allow read, write: if isSignedIn() && (resource == null || resource.data.userId == request.auth.uid) && (request.resource == null || request.resource.data.userId == request.auth.uid);
+    }
+
+    // 3. Interviews Collection - Active and completed mock interviews. Strictly isolated per user.
+    match /interviews/{interviewId} {
+      allow read, write: if isSignedIn() && (resource == null || resource.data.userId == request.auth.uid) && (request.resource == null || request.resource.data.userId == request.auth.uid);
+    }
+  }
+}

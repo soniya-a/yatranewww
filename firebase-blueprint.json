@@ -1,0 +1,92 @@
+{
+  "entities": {
+    "roadmap": {
+      "title": "AI Career Roadmap",
+      "description": "Customized 6-month career roadmaps generated for college students in India.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "User ID of the student"
+        },
+        "role": {
+          "type": "string",
+          "description": "Target job/internship role"
+        },
+        "skills_to_learn": {
+          "type": "array",
+          "description": "Target skills"
+        },
+        "courses": {
+          "type": "array",
+          "description": "Online learning courses"
+        },
+        "project_ideas": {
+          "type": "array",
+          "description": "Beginner-level project ideas"
+        },
+        "books_resources": {
+          "type": "array",
+          "description": "Recommended books/resources"
+        },
+        "createdAt": {
+          "type": "number",
+          "description": "Creation timestamp in milliseconds"
+        }
+      },
+      "required": [
+        "userId",
+        "role",
+        "skills_to_learn",
+        "courses",
+        "project_ideas",
+        "books_resources",
+        "createdAt"
+      ]
+    },
+    "company": {
+      "title": "Company Interview Dataset",
+      "description": "Predefined sets of interview questions by company details.",
+      "type": "object",
+      "properties": {
+        "company": {
+          "type": "string",
+          "description": "Name of the target company"
+        },
+        "role": {
+          "type": "string",
+          "description": "The specific technical/behavioral job role"
+        },
+        "difficulty": {
+          "type": "string",
+          "enum": [
+            "Easy",
+            "Medium",
+            "Hard"
+          ],
+          "description": "Assessed level of difficulty"
+        },
+        "questions": {
+          "type": "array",
+          "description": "A list of preset interview questions"
+        }
+      },
+      "required": [
+        "company",
+        "role",
+        "difficulty",
+        "questions"
+      ]
+    }
+  },
+  "firestore": {
+    "companies": {
+      "schema": "company",
+      "description": "Collection of available company interview roles and question sets"
+    },
+    "roadmaps": {
+      "schema": "roadmap",
+      "description": "Collection of custom career roadmaps for students in India"
+    }
+  }
+}

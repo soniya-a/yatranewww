@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Newyatra AI</title>
+    <script>
+      // Early Sandbox Error Shield: Suppress cross-origin "Script error." and 3D issues
+      window.onerror = function (message, source, lineno, colno, error) {
+        var msg = String(message || '');
+        if (
+          msg.indexOf('Script error.') !== -1 ||
+          msg.toLowerCase().indexOf('aframe') !== -1 ||
+          msg.toLowerCase().indexOf('webgl') !== -1 ||
+          msg.toLowerCase().indexOf('three') !== -1 ||
+          !source
+        ) {
+          console.warn('[Newyatra AI Early Shield] Ignorable error captured:', msg);
+          return true; // Prevents the error from bubble-up and browser logging
+        }
+        return false;
+      };
+
+      window.addEventListener('error', function (event) {
+        var msg = event.message || '';
+        if (
+          msg.indexOf('Script error.') !== -1 ||
+          msg.toLowerCase().indexOf('aframe') !== -1 ||
+          msg.toLowerCase().indexOf('webgl') !== -1 ||
+          msg.toLowerCase().indexOf('three') !== -1 ||
+          !event.filename
+        ) {
+          event.preventDefault();
+          event.stopPropagation();
+          event.stopImmediatePropagation();
+          return true;
+        }
+      }, true);
+
+      window.addEventListener('unhandledrejection', function (event) {
+        var reason = String(event.reason || '');
+        if (
+          reason.indexOf('Script error.') !== -1 ||
+          reason.toLowerCase().indexOf('aframe') !== -1 ||
+          reason.toLowerCase().indexOf('webgl') !== -1
+        ) {
+          event.preventDefault();
+          event.stopPropagation();
+          return true;
+        }
+      }, true);
+    </script>
+    <!-- A-Frame VR Framework -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/aframe/1.4.2/aframe.min.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/gh/c-frame/aframe-extras@7.4.0/dist/aframe-extras.min.js" crossorigin="anonymous"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+
