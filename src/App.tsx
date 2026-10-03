@@ -1,7 +1,12 @@
 import React, { useEffect, useState, useRef } from "react";
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
-import { onAuthStateChanged, signInWithPopup, signInAnonymously, User } from "firebase/auth";
-import { auth, googleProvider } from "./lib/firebase";
+import { supabase } from "./lib/supabase";
+export interface AppUser {
+  uid: string;
+  email?: string;
+  displayName?: string;
+  getIdToken?: () => Promise<string>;
+}
 import Home from "./pages/Home";
 import Interview from "./pages/Interview";
 import AdminDashboard from "./pages/AdminDashboard";
@@ -342,7 +347,7 @@ const GlobalNetworkGrid = () => {
 };
 
 export default function App() {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<AppUser | null>(null);
   const [loading, setLoading] = useState(true);
 
   // Authentication states
@@ -402,90 +407,107 @@ export default function App() {
   };
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (u) => {
-      if (!u && localStorage.getItem("guest_session") === "true") {
-        const payload = { user_id: "guest-user-123" };
+    // 1. Initial check for existing Supabase session or Guest session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        setUser({
+          uid: session.user.id,
+          email: session.user.email || "user@yatra.ai",
+          displayName: session.user.user_metadata?.full_name || session.user.email?.split("@")[0] || "User",
+          getIdToken: async () => session.access_token
+        });
+        setLoading(false);
+      } else if (localStorage.getItem("guest_session") === "true") {
+        const uid = localStorage.getItem("guest_uid") || "guest-user-123";
+        const email = localStorage.getItem("guest_email") || "soniya@yatra.ai";
+        const name = localStorage.getItem("guest_name") || "Soniya";
+        const payload = { user_id: uid };
         const payloadB64 = btoa(JSON.stringify(payload))
           .replace(/=/g, "")
           .replace(/\+/g, "-")
           .replace(/\//g, "_");
-        
+
         setUser({
-          uid: "guest-user-123",
-          email: localStorage.getItem("guest_email") || "jsoniyasonu0410@gmail.com",
-          displayName: "Sonu",
+          uid,
+          email,
+          displayName: name,
           getIdToken: async () => `header.${payloadB64}.signature`
-        } as any);
+        });
         setLoading(false);
       } else {
-        setUser(u);
+        setUser(null);
         setLoading(false);
       }
+    }).catch(() => {
+      setLoading(false);
     });
-    return unsubscribe;
+
+    // 2. Real-time auth changes listener
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user) {
+        setUser({
+          uid: session.user.id,
+          email: session.user.email || "user@yatra.ai",
+          displayName: session.user.user_metadata?.full_name || session.user.email?.split("@")[0] || "User",
+          getIdToken: async () => session.access_token
+        });
+      } else if (!localStorage.getItem("guest_session")) {
+        setUser(null);
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
   }, []);
 
-  // Standard Login trigger
-  const handleAuthLogin = async () => {
-    if (isLoggingIn) return;
+  // Standard Login / Sign-up trigger
+  const handleAuthLogin = async (userInfo?: { email?: string; name?: string }) => {
     setIsLoggingIn(true);
     setAuthError(null);
 
-    // Soft trigger login success transition before committing final authentication state
-    setIsSuccessPreparing(true);
-    
-    // Incremental ticking of readiness counter
-    let count = 74;
-    const scoreInterval = setInterval(() => {
-      if (count < 86) {
-        count += 1;
-        setScoreCounter(count);
-      } else {
-        clearInterval(scoreInterval);
-      }
-    }, 180);
+    const emailToUse = userInfo?.email || localStorage.getItem("guest_email") || "soniya@yatra.ai";
+    const nameToUse = userInfo?.name || emailToUse.split("@")[0] || "Soniya";
+    const uidToUse = "user-" + Date.now();
 
-    // Commit firebase guest session logins or mock signin after transition grace period
+    localStorage.setItem("guest_session", "true");
+    localStorage.setItem("guest_uid", uidToUse);
+    localStorage.setItem("guest_email", emailToUse);
+    localStorage.setItem("guest_name", nameToUse);
+
+    const payload = { user_id: uidToUse };
+    const payloadB64 = btoa(JSON.stringify(payload))
+      .replace(/=/g, "")
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_");
+
+    // Fast, smooth transition into the application (350ms)
     setTimeout(() => {
-      localStorage.setItem("guest_session", "true");
-      localStorage.setItem("guest_uid", "guest-user-123");
-      localStorage.setItem("guest_email", "jsoniyasonu0410@gmail.com");
-      
-      const payload = { user_id: "guest-user-123" };
-      const payloadB64 = btoa(JSON.stringify(payload))
-        .replace(/=/g, "")
-        .replace(/\+/g, "-")
-        .replace(/\//g, "_");
-
       setUser({
-        uid: "guest-user-123",
-        email: "jsoniyasonu0410@gmail.com",
-        displayName: "Sonu",
+        uid: uidToUse,
+        email: emailToUse,
+        displayName: nameToUse,
         getIdToken: async () => `header.${payloadB64}.signature`
-      } as any);
+      });
       setIsSuccessPreparing(false);
       setIsLoggingIn(false);
-    }, 4500);
+    }, 350);
   };
 
   const handleGoogleLogin = async () => {
-    if (isLoggingIn) return;
     setIsLoggingIn(true);
     setAuthError(null);
-    let fallback = false;
     try {
-      await signInWithPopup(auth, googleProvider);
-      localStorage.removeItem("guest_session");
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: window.location.origin
+        }
+      });
+      if (error) throw error;
     } catch (error: any) {
-      console.error("Google authenticated crash: ", error);
-      fallback = true;
-    } finally {
-      if (fallback) {
-        setIsLoggingIn(false);
-        handleAuthLogin();
-      } else {
-        setIsLoggingIn(false);
-      }
+      console.warn("Supabase Google OAuth unavailable or redirected, falling back to authenticated session:", error);
+      handleAuthLogin({ email: "soniya@yatra.ai", name: "Soniya J" });
     }
   };
 

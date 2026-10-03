@@ -1,16 +1,34 @@
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = process.env.SUPABASE_URL || '';
-const supabaseKey = process.env.SUPABASE_PUBLISHABLE_KEY || '';
+const getEnvVar = (key: string): string => {
+  if (typeof process !== 'undefined' && process.env && process.env[key]) {
+    return process.env[key] as string;
+  }
+  // @ts-ignore
+  if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env[key]) {
+    // @ts-ignore
+    return import.meta.env[key] as string;
+  }
+  return '';
+};
+
+const supabaseUrl = getEnvVar('SUPABASE_URL');
+const supabaseKey = getEnvVar('SUPABASE_PUBLISHABLE_KEY');
 
 export const isSupabaseConfigured = Boolean(
-  process.env.SUPABASE_URL && 
-  process.env.SUPABASE_URL.trim() !== '' &&
-  process.env.SUPABASE_PUBLISHABLE_KEY && 
-  process.env.SUPABASE_PUBLISHABLE_KEY.trim() !== ''
+  supabaseUrl && supabaseUrl.trim() !== '' && !supabaseUrl.includes('placeholder') &&
+  supabaseKey && supabaseKey.trim() !== '' && !supabaseKey.includes('placeholder')
 );
 
 export const supabase = createClient(
-  supabaseUrl || 'https://placeholder.supabase.co',
-  supabaseKey || 'placeholder-key'
+  supabaseUrl || 'https://vimllthildskrgkjpwdv.supabase.co',
+  supabaseKey || 'placeholder-key',
+  {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true
+    }
+  }
 );
+

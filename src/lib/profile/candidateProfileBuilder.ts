@@ -62,9 +62,12 @@ const DOMAIN_DICTIONARY: Record<EngineeringDomain, { keywords: string[]; primary
   },
   electrical: {
     keywords: [
-      "power systems", "switchgear", "transformers", "substation", "high voltage", "power electronics",
-      "plc", "scada", "motor drives", "matlab simulink", "electrical machines", "protection relay",
-      "single line diagram", "sld"
+      "electrical", "eee", "electrical & electronics", "electrical engineering", "power systems",
+      "switchgear", "transformers", "substation", "high voltage", "power electronics",
+      "plc programming", "plc", "scada", "motor drives", "matlab simulink", "simulink", "matlab/simulink",
+      "electrical machines", "protection relay", "single line diagram", "sld", "autocad electrical",
+      "etap", "proteus", "siemens", "wonderware", "power factor", "apfc", "inverter", "solar grid",
+      "panel wiring", "relay coordination", "switchgear inspection", "delta power controls"
     ],
     primaryRole: "Electrical Engineer"
   },
@@ -235,6 +238,30 @@ function classifyDomain(
 }
 
 /**
+ * Extracts candidate full name from raw resume text.
+ */
+export function extractCandidateName(resumeText: string): string | undefined {
+  if (!resumeText) return undefined;
+  const lines = resumeText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+
+  for (const line of lines.slice(0, 6)) {
+    if (/phone|email|location|curriculum|resume|page|http|@|experience|education|summary|profile|skills/i.test(line)) {
+      continue;
+    }
+    const cleanLine = line.replace(/[^a-zA-Z\s.-]/g, "").trim();
+    const words = cleanLine.split(/\s+/).filter(Boolean);
+
+    if (words.length >= 2 && words.length <= 4) {
+      const isNameLike = words.every(w => /^[A-Za-z][a-zA-Z.-]*$/.test(w));
+      if (isNameLike) {
+        return cleanLine;
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
  * Builds the canonical CandidateProfile from raw backend parse data and resume text.
  */
 export function buildCanonicalProfile(
@@ -325,7 +352,14 @@ export function buildCanonicalProfile(
     }
   }
 
+  // Extract candidate full name
+  const extractedName =
+    parseResult?.candidate_name ||
+    mlParseResult?.candidate_name ||
+    extractCandidateName(rawResumeText);
+
   return {
+    fullName: extractedName,
     rawResumeText: rawResumeText.substring(0, 8000),
     domain: classification.domain,
     primaryRole: classification.primaryRole,

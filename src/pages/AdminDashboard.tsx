@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ArrowLeft, Plus, Trash2, Database, UploadCloud } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { db, auth, handleFirestoreError, OperationType, getDocsWithTimeout } from '../lib/firebase';
-import { collection, addDoc, getDocs, deleteDoc, doc } from 'firebase/firestore';
+import { supabase } from '../lib/supabase';
 
 export default function AdminDashboard() {
   const navigate = useNavigate();
@@ -13,13 +12,19 @@ export default function AdminDashboard() {
   const [newQuestions, setNewQuestions] = useState("");
 
   const fetchCompanies = async () => {
-    const pathStr = 'companies';
     try {
-      const snap = await getDocsWithTimeout(collection(db, pathStr));
-      setCompanies(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      const { data, error } = await supabase.from('companies').select('*').order('created_at', { ascending: false });
+      if (error) throw error;
+      if (data && data.length > 0) {
+        setCompanies(data);
+      } else {
+        setCompanies([
+          { id: "fallback-google", company: "Google India", role: "Web Developer Intern", difficulty: "Medium", questions: ["Explain React Render properties", "Detail async/await states"] },
+          { id: "fallback-intel", company: "Intel India", role: "AI Software Intern", difficulty: "Medium", questions: ["Tune training oscillations", "Quantize PyTorch model states"] }
+        ]);
+      }
     } catch (e) {
-      console.warn("Could not fetch companies from Firestore (offline/timeout).", e);
-      // Fallback: load some default samples if offline to keep admin UI neat
+      console.warn("Could not fetch companies from Supabase (offline/table missing). Using fallback.", e);
       setCompanies([
         { id: "fallback-google", company: "Google India", role: "Web Developer Intern", difficulty: "Medium", questions: ["Explain React Render properties", "Detail async/await states"] },
         { id: "fallback-intel", company: "Intel India", role: "AI Software Intern", difficulty: "Medium", questions: ["Tune training oscillations", "Quantize PyTorch model states"] }
@@ -34,30 +39,31 @@ export default function AdminDashboard() {
   const handleAddCompany = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCompany || !newRole || !newQuestions) return;
-    const pathStr = 'companies';
     try {
-      await addDoc(collection(db, pathStr), {
+      const { error } = await supabase.from('companies').insert([{
         company: newCompany,
         role: newRole,
         difficulty: newDifficulty,
         questions: newQuestions.split('\n').map(q => q.trim()).filter(Boolean)
-      });
+      }]);
+      if (error) throw error;
       setNewCompany("");
       setNewRole("");
       setNewQuestions("");
       fetchCompanies();
     } catch (e) {
-      handleFirestoreError(e, OperationType.CREATE, pathStr);
+      console.error("Error adding company to Supabase:", e);
+      alert("Failed to save to Supabase. Check that you ran the schema migration!");
     }
   };
 
   const handleDelete = async (id: string) => {
-    const docPath = `companies/${id}`;
     try {
-      await deleteDoc(doc(db, 'companies', id));
+      const { error } = await supabase.from('companies').delete().eq('id', id);
+      if (error) throw error;
       fetchCompanies();
     } catch (e) {
-      handleFirestoreError(e, OperationType.DELETE, docPath);
+      console.error("Error deleting company from Supabase:", e);
     }
   };
 

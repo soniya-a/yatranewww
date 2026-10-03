@@ -14,7 +14,8 @@ import { adzunaProvider } from "./src/lib/jobs/adzunaProvider";
 import { enrichJobsWithMatching, determinePrimaryTargetRole } from "./src/lib/jobs/liveJobMatcher";
 import { generateJobInterviewSession } from "./src/lib/interview/jobInterviewEngine";
 import { generateWithAstra } from "./src/lib/ai/openaiProvider";
-
+import { generateInterviewQuestions } from "./src/engine/questionEngine";
+import mammoth from "mammoth";
 const firebaseConfigPath = path.join(process.cwd(), "firebase-applet-config.json");
 let firebaseConfig: any = {};
 if (fs.existsSync(firebaseConfigPath)) {
@@ -39,35 +40,35 @@ function checkIsQuotaError(error: any): boolean {
     const errorStr = JSON.stringify(error).toLowerCase();
     const messageStr = (error.message || "").toString().toLowerCase();
     const statusStr = (error.status || error.code || "").toString().toLowerCase();
-    
+
     return error.status === 429 ||
-           error.code === 429 ||
-           error.status === 503 ||
-           error.code === 503 ||
-           statusStr.includes("429") ||
-           messageStr.includes("429") ||
-           statusStr.includes("503") ||
-           messageStr.includes("503") ||
-           messageStr.includes("quota") ||
-           messageStr.includes("exhausted") ||
-           messageStr.includes("demand") ||
-           messageStr.includes("unavailable") ||
-           messageStr.includes("temporary") ||
-           messageStr.includes("invalid key") ||
-           messageStr.includes("api key not valid") ||
-           errorStr.includes("429") ||
-           errorStr.includes("503") ||
-           errorStr.includes("quota") ||
-           messageStr.includes("rate_limit") ||
-           errorStr.includes("rate_limit") ||
-           errorStr.includes("resource_exhausted") ||
-           errorStr.includes("exhausted") ||
-           errorStr.includes("demand") ||
-           errorStr.includes("unavailable") ||
-           errorStr.includes("temporary") ||
-           errorStr.includes("spikes") ||
-           errorStr.includes("circuit_breaker_active") ||
-           messageStr.includes("circuit_breaker_active");
+      error.code === 429 ||
+      error.status === 503 ||
+      error.code === 503 ||
+      statusStr.includes("429") ||
+      messageStr.includes("429") ||
+      statusStr.includes("503") ||
+      messageStr.includes("503") ||
+      messageStr.includes("quota") ||
+      messageStr.includes("exhausted") ||
+      messageStr.includes("demand") ||
+      messageStr.includes("unavailable") ||
+      messageStr.includes("temporary") ||
+      messageStr.includes("invalid key") ||
+      messageStr.includes("api key not valid") ||
+      errorStr.includes("429") ||
+      errorStr.includes("503") ||
+      errorStr.includes("quota") ||
+      messageStr.includes("rate_limit") ||
+      errorStr.includes("rate_limit") ||
+      errorStr.includes("resource_exhausted") ||
+      errorStr.includes("exhausted") ||
+      errorStr.includes("demand") ||
+      errorStr.includes("unavailable") ||
+      errorStr.includes("temporary") ||
+      errorStr.includes("spikes") ||
+      errorStr.includes("circuit_breaker_active") ||
+      messageStr.includes("circuit_breaker_active");
   } catch (e) {
     console.info("checkIsQuotaError serialization fallback (silent)");
     return true;
@@ -90,7 +91,7 @@ async function retryWithBackoff<T>(fn: () => Promise<T>, retries = 1, delay = 20
       geminiCircuitBreakerActiveUntil = Date.now() + 60000; // Cool down for 60 seconds
       throw new Error("RATE_LIMITED_FALLBACK");
     }
-    
+
     // Only retry on non-429 errors (e.g. 500, network issues)
     if (retries > 0) {
       const jitter = Math.floor(Math.random() * 800);
@@ -99,7 +100,7 @@ async function retryWithBackoff<T>(fn: () => Promise<T>, retries = 1, delay = 20
       await new Promise(resolve => setTimeout(resolve, sleepTime));
       return await retryWithBackoff(fn, retries - 1, delay * 2);
     }
-    
+
     throw error;
   }
 }
@@ -580,10 +581,30 @@ function processSkillItems(text: string, seen: Set<string>, out: string[]) {
   }
 }
 
+// Extract name from top lines of resume text
+function extractNameFromResumeText(resumeText: string): string | undefined {
+  if (!resumeText) return undefined;
+  const lines = resumeText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  for (const line of lines.slice(0, 6)) {
+    if (/phone|email|location|curriculum|resume|page|http|@|experience|education|summary|profile|skills/i.test(line)) {
+      continue;
+    }
+    const cleanLine = line.replace(/[^a-zA-Z\s.-]/g, "").trim();
+    const words = cleanLine.split(/\s+/).filter(Boolean);
+    if (words.length >= 2 && words.length <= 4) {
+      if (words.every(w => /^[A-Za-z][a-zA-Z.-]*$/.test(w))) {
+        return cleanLine;
+      }
+    }
+  }
+  return undefined;
+}
+
 // Custom backup resume parser template
 function getFallbackResumeDetails(resumeText: string) {
   const norm = (resumeText || "").toLowerCase();
   const matchResult = matchResumeToRegistry(resumeText);
+  const candidateName = extractNameFromResumeText(resumeText);
 
   // Extract ONLY verified skills present in the resume text
   // NEVER invents skills not present in the text
@@ -591,7 +612,8 @@ function getFallbackResumeDetails(resumeText: string) {
 
   // Candidate title detection for top matching role
   const candidateRoles: string[] = [];
-  if (norm.includes("mechanical design engineer")) candidateRoles.push("Mechanical Design Engineer");
+  if (norm.includes("electrical engineer") || norm.includes("eee")) candidateRoles.push("Electrical Engineer");
+  else if (norm.includes("mechanical design engineer")) candidateRoles.push("Mechanical Design Engineer");
   else if (norm.includes("mechanical engineer")) candidateRoles.push("Mechanical Engineer");
   if (norm.includes("structural engineer")) candidateRoles.push("Structural Engineer");
   else if (norm.includes("civil site engineer")) candidateRoles.push("Civil Site Engineer");
@@ -605,6 +627,7 @@ function getFallbackResumeDetails(resumeText: string) {
   const allRoles = [...new Set([...candidateRoles, ...matchResult.recommendedRoles])];
 
   console.info("[Resume Fallback Diagnostics]", {
+    candidateName,
     detectedDomain: matchResult.matchedCategory,
     verifiedSkillCount: verifiedSkills.length,
     skills: verifiedSkills,
@@ -613,6 +636,7 @@ function getFallbackResumeDetails(resumeText: string) {
   });
 
   return {
+    candidate_name: candidateName,
     skills: verifiedSkills,
     matchingRoles: allRoles,
     matchingCompanies: matchResult.companies.slice(0, 6).map(c => ({
@@ -628,13 +652,14 @@ function getFallbackResumeDetails(resumeText: string) {
 function getFallbackMLResumeDetails(resumeText: string) {
   const text = (resumeText || "").toLowerCase();
   const matchResult = matchResumeToRegistry(resumeText);
+  const candidateName = extractNameFromResumeText(resumeText);
   const domain = matchResult.matchedCategory;
 
   // Extract ONLY verified skills present in the resume
   const verifiedSkills = extractVerifiedSkillsFromText(resumeText);
 
   // Build skill list with proficiency & experience metrics
-  const skillList: {name: string, proficiency: string, years: number, latest_use?: string}[] = [];
+  const skillList: { name: string, proficiency: string, years: number, latest_use?: string }[] = [];
   for (const skill of verifiedSkills.slice(0, 8)) {
     // Determine proficiency based on frequency in text
     const lower = skill.toLowerCase();
@@ -729,6 +754,7 @@ function getFallbackMLResumeDetails(resumeText: string) {
   });
 
   return {
+    candidate_name: candidateName,
     technical_skills: skillList,
     achievements: achievementsList,
     experience_score: experienceScore,
@@ -816,7 +842,7 @@ function parseSystemInstruction(instruction: string) {
 // Generate high quality interview questions per role
 function getRoleSpecificQuestions(role: string, company: string, skills: string) {
   const normRole = role.toLowerCase();
-  
+
   if (normRole.includes("civil") || normRole.includes("structur") || normRole.includes("site") || normRole.includes("rcc")) {
     return {
       techQuestion: `For your role in Civil/Structural Engineering at ${company}, let's talk about structural modeling and code compliance under dynamic environmental loads. How do you structure analysis in STAAD.Pro or ETABS to evaluate lateral drift limits and verify member safety according to design codes?`,
@@ -934,7 +960,7 @@ async function startServer() {
       }
       const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
       const jsonPayload = Buffer.from(base64, 'base64').toString('utf-8');
-      
+
       const decodedToken = JSON.parse(jsonPayload);
       if (!decodedToken || typeof decodedToken !== 'object') {
         throw new Error("Invalid decoded JSON payload");
@@ -959,10 +985,10 @@ async function startServer() {
     if (process.env.NODE_ENV === "production") {
       return res.status(403).json({ error: "development-only" });
     }
-    
+
     // We expect the prompt to just be something simple or deterministic
     const result = await generateWithAstra("Respond with exact text: ASTRA_OK");
-    
+
     res.json({
       success: result.success,
       provider: "openai",
@@ -1004,7 +1030,7 @@ async function startServer() {
       (session as any).turn = 1;
 
       chatSessions.set(userId, session);
-      
+
       const response = await retryWithBackoff(() => session.sendMessage({ message: "Start the interview. Greet the candidate and ask the first question." })) as any;
       res.json({ text: response.text });
     } catch (error: any) {
@@ -1013,7 +1039,7 @@ async function startServer() {
       } else {
         console.info(`[Gemini API] Chat session initiation failed. Local offline simulation launched.`);
       }
-      
+
       const parsed = parseSystemInstruction(req.body.systemInstruction || "");
       const mockSession: any = {
         isFallback: true,
@@ -1023,7 +1049,7 @@ async function startServer() {
         skills: parsed.candidateSkills,
         questions: undefined
       };
-      
+
       chatSessions.set(userId, mockSession);
       const fallbackResponse = getFallbackChatResponse(mockSession);
       res.json({ text: JSON.stringify(fallbackResponse) });
@@ -1062,7 +1088,7 @@ async function startServer() {
       } else {
         console.info(`[Gemini API] Chat message dispatch failed. Moving seamlessly to local simulation.`);
       }
-      
+
       const mockSession: any = {
         isFallback: true,
         turn: session.turn || 2, // Assume we transition on technical question
@@ -1072,7 +1098,7 @@ async function startServer() {
         questions: session.questions || undefined
       };
       chatSessions.set(userId, mockSession);
-      
+
       const fallbackResponse = getFallbackChatResponse(mockSession, req.body.message);
       res.json({ text: JSON.stringify(fallbackResponse) });
     }
@@ -1091,11 +1117,11 @@ async function startServer() {
         console.info("[Gemini API] GEMINI_API_KEY is not defined. Falling back to high-grade local roadmap.");
         return res.json(getFeedbackRoadmap(role, durationVal));
       }
-      
+
       const p = profile || {};
       const durationPrompt = durationVal === "6 months" ? "comprehensive 6-month (24-week) placements roadmap structured into monthly milestones"
-                           : durationVal === "3 months" ? "strategic 3-month (12-week) study plan structured with weekly goals"
-                           : "laser-focused 30-day (4-week) accelerated roadmap";
+        : durationVal === "3 months" ? "strategic 3-month (12-week) study plan structured with weekly goals"
+          : "laser-focused 30-day (4-week) accelerated roadmap";
 
       const prompt = `TASK: ROADMAP_GENERATOR_V3
 
@@ -1221,7 +1247,7 @@ Return ONLY this structured JSON matching this schema:
       else if (cleanText.startsWith("\`\`\`")) cleanText = cleanText.substring(3);
       if (cleanText.endsWith("\`\`\`")) cleanText = cleanText.substring(0, cleanText.length - 3);
       cleanText = cleanText.trim();
-      
+
       const parsedData = JSON.parse(cleanText);
       res.json(parsedData);
     } catch (error: any) {
@@ -1365,6 +1391,162 @@ Return ONLY this structured JSON matching this schema:
     }
   });
 
+  // ── DOCX Resume Extraction ──────────────────────────────────────────────
+  app.post("/api/resume/extract-docx", authenticate, async (req, res) => {
+    const filename = req.body?.filename || "unknown";
+
+    try {
+      const { docxBase64 } = req.body;
+      if (!docxBase64 || typeof docxBase64 !== "string") {
+        console.warn("[DOCX Diagnostics]", {
+          filename,
+          status: "DOCX_PAYLOAD_MISSING"
+        });
+        return res.status(400).json({
+          success: false,
+          error: {
+            code: "DOCX_PAYLOAD_MISSING",
+            message: "DOCX data payload is required."
+          }
+        });
+      }
+
+      // Strip Data URL prefix if present: data:application/...;base64,<BASE64>
+      let cleanBase64 = docxBase64.trim();
+      const commaIdx = cleanBase64.indexOf(",");
+      if (cleanBase64.startsWith("data:") && commaIdx !== -1) {
+        cleanBase64 = cleanBase64.substring(commaIdx + 1);
+      } else if (commaIdx !== -1 && cleanBase64.slice(0, commaIdx).toLowerCase().includes("base64")) {
+        cleanBase64 = cleanBase64.substring(commaIdx + 1);
+      }
+      cleanBase64 = cleanBase64.replace(/\s+/g, "");
+
+      const buffer = Buffer.from(cleanBase64, "base64");
+      const result = await mammoth.extractRawText({ buffer });
+      const text = (result.value || "").trim();
+
+      if (text.length < 50) {
+        console.warn("[DOCX Diagnostics]", {
+          filename,
+          decodedByteLength: buffer.length,
+          extractedCharacterCount: text.length,
+          status: "EMPTY_DOCUMENT"
+        });
+        return res.status(400).json({
+          success: false,
+          error: {
+            code: "EMPTY_DOCUMENT",
+            message: "Could not extract meaningful text from this DOCX file. It may be empty or corrupted."
+          }
+        });
+      }
+
+      console.log("[DOCX Diagnostics]", {
+        filename,
+        decodedByteLength: buffer.length,
+        parser: "mammoth",
+        extractedCharacterCount: text.length
+      });
+
+      return res.json({
+        success: true,
+        text,
+        charCount: text.length,
+        format: "docx"
+      });
+    } catch (err: any) {
+      console.error("[DOCX Extract Error]", {
+        filename,
+        errorName: err?.name,
+        errorMessage: err?.message
+      });
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: "DOCX_EXTRACTION_FAILED",
+          message: err?.message || "Failed to extract text from DOCX."
+        }
+      });
+    }
+  });
+
+  // ── TXT Resume Extraction ───────────────────────────────────────────────
+  app.post("/api/resume/extract-txt", authenticate, async (req, res) => {
+    const filename = req.body?.filename || "unknown";
+
+    try {
+      const { txtBase64 } = req.body;
+      if (!txtBase64 || typeof txtBase64 !== "string") {
+        console.warn("[TXT Diagnostics]", {
+          filename,
+          status: "TXT_PAYLOAD_MISSING"
+        });
+        return res.status(400).json({
+          success: false,
+          error: {
+            code: "TXT_PAYLOAD_MISSING",
+            message: "TXT data payload is required."
+          }
+        });
+      }
+
+      // Strip Data URL prefix if present: data:text/...;base64,<BASE64>
+      let cleanBase64 = txtBase64.trim();
+      const commaIdx = cleanBase64.indexOf(",");
+      if (cleanBase64.startsWith("data:") && commaIdx !== -1) {
+        cleanBase64 = cleanBase64.substring(commaIdx + 1);
+      } else if (commaIdx !== -1 && cleanBase64.slice(0, commaIdx).toLowerCase().includes("base64")) {
+        cleanBase64 = cleanBase64.substring(commaIdx + 1);
+      }
+      cleanBase64 = cleanBase64.replace(/\s+/g, "");
+
+      const buffer = Buffer.from(cleanBase64, "base64");
+      const text = buffer.toString("utf-8").trim();
+
+      if (text.length < 50) {
+        console.warn("[TXT Diagnostics]", {
+          filename,
+          decodedByteLength: buffer.length,
+          extractedCharacterCount: text.length,
+          status: "EMPTY_DOCUMENT"
+        });
+        return res.status(400).json({
+          success: false,
+          error: {
+            code: "EMPTY_DOCUMENT",
+            message: "The uploaded TXT file is empty or too short."
+          }
+        });
+      }
+
+      console.log("[TXT Diagnostics]", {
+        filename,
+        decodedByteLength: buffer.length,
+        extractedCharacterCount: text.length
+      });
+
+      return res.json({
+        success: true,
+        text,
+        charCount: text.length,
+        format: "txt"
+      });
+    } catch (err: any) {
+      console.error("[TXT Extract Error]", {
+        filename,
+        errorName: err?.name,
+        errorMessage: err?.message
+      });
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: "TXT_EXTRACTION_FAILED",
+          message: err?.message || "Failed to extract text from TXT."
+        }
+      });
+    }
+  });
+
   app.post("/api/resume/parse", authenticate, async (req, res) => {
     const { resumeText } = req.body;
     if (!resumeText) {
@@ -1468,7 +1650,7 @@ ${resumeText.substring(0, 16000)}`;
       if (cleanedText.startsWith("```")) {
         cleanedText = cleanedText.replace(/^```(json)?/i, "").replace(/```$/, "").trim();
       }
-      
+
       let parsedData;
       try {
         parsedData = JSON.parse(cleanedText);
@@ -1522,13 +1704,13 @@ ${resumeText.substring(0, 16000)}`;
       const internships = getArraySafe(parsedData?.internships);
       const experience = getArraySafe(parsedData?.experience);
       const combinedRoles = [...experience, ...internships];
-      
+
       if (combinedRoles.length > 0) {
         matchingRoles = combinedRoles
           .map((i: any) => i?.role || i?.title)
           .filter((role: any) => typeof role === "string" && role.trim().length > 0);
       }
-      
+
       // If no past roles were found in resume, try to deduce from Gemini's parsing or fallback
       if (matchingRoles.length === 0) {
         matchingRoles = matchingCompanies.map(c => c.role);
@@ -1810,7 +1992,7 @@ ${resumeText.substring(0, 8000)}`;
   // Comprehensive fallback question banks for 6 interview rounds, with 8 questions each
   function getFallbackRoundQuestions(roundType: string, role: string, company: string, skills: string) {
     const norm = (roundType || "").toLowerCase();
-    
+
     if (norm.includes("intro") || norm.includes("self")) {
       return {
         questions: [
@@ -2225,60 +2407,60 @@ Return ONLY this JSON, containing EXACTLY 5 matching companies (sorted by match_
         cleanText = cleanText.substring(0, cleanText.length - 3);
       }
       cleanText = cleanText.trim();
-      
+
       const parsedData = JSON.parse(cleanText);
       res.json(parsedData);
     } catch (error: any) {
       if (checkIsQuotaError(error)) {
         console.log("Fallback triggered (omitting details to avoid platform flags)");
       }
-      
+
       const fallbackMatch = {
         analysis_date: new Date().toISOString(),
         candidate_name: candidateProfile?.personal?.name || "Target Candidate",
         total_roles_analyzed: 50,
         top_match: candidateProfile?.matchingCompanies?.[0]?.company || "Target Company",
-        companies: (candidateProfile?.matchingCompanies && candidateProfile.matchingCompanies.length > 0) 
+        companies: (candidateProfile?.matchingCompanies && candidateProfile.matchingCompanies.length > 0)
           ? candidateProfile.matchingCompanies.map((c: any, index: number) => ({
-              rank: index + 1,
-              company: c.company || "Google",
-              logo_initial: (c.company || "Google").charAt(0),
-              role: candidateProfile.matchingRoles?.[0] || c.role || "Software Engineer",
-              match_score: typeof c.matchScore === 'string' ? parseInt(c.matchScore.replace(/[^0-9]/g, "")) || (95 - index * 5) : (c.matchScore || (95 - index * 5)),
-              match_label: "Strong Match",
-              matched_skills: candidateProfile.skills?.slice(0, 4) || ["Problem Solving", "Teamwork"],
-              missing_skills: ["Advanced Frameworks"],
-              required_skills_for_this_role: candidateProfile.skills?.slice(0, 5) || ["Requirements"],
-              interview_difficulty: "Medium",
-              interview_rounds: ["Technical Screening", "Behavioral"],
-              time_to_prepare: "4 weeks",
-              naya_advice: c.reason || "Solid profile, prepare well for your core skills.",
-              alya_advice: c.reason || "Solid profile, prepare well for your core skills.",
-              apply_now: index === 0
-            }))
-          : [
-          {
-            rank: 1,
-            company: "Target Tech",
-            logo_initial: "T",
-            role: candidateProfile?.matchingRoles?.[0] || "Software Engineer",
-            match_score: 95,
+            rank: index + 1,
+            company: c.company || "Google",
+            logo_initial: (c.company || "Google").charAt(0),
+            role: candidateProfile.matchingRoles?.[0] || c.role || "Software Engineer",
+            match_score: typeof c.matchScore === 'string' ? parseInt(c.matchScore.replace(/[^0-9]/g, "")) || (95 - index * 5) : (c.matchScore || (95 - index * 5)),
             match_label: "Strong Match",
-            matched_skills: candidateProfile.skills?.slice(0, 4) || ["Problem Solving", "React", "TypeScript", "Algorithms"],
-            missing_skills: ["System Design"],
-            required_skills_for_this_role: ["Algorithms", "System Design"],
+            matched_skills: candidateProfile.skills?.slice(0, 4) || ["Problem Solving", "Teamwork"],
+            missing_skills: ["Advanced Frameworks"],
+            required_skills_for_this_role: candidateProfile.skills?.slice(0, 5) || ["Requirements"],
             interview_difficulty: "Medium",
-            interview_rounds: ["DSA Screening", "System Design", "Behavioral"],
+            interview_rounds: ["Technical Screening", "Behavioral"],
             time_to_prepare: "4 weeks",
-            naya_advice: "Your skills are well aligned. Focus on reviewing core patterns for the interview.",
-            alya_advice: "Your skills are well aligned. Focus on reviewing core patterns for the interview.",
-            apply_now: true
-          }
-        ],
+            naya_advice: c.reason || "Solid profile, prepare well for your core skills.",
+            alya_advice: c.reason || "Solid profile, prepare well for your core skills.",
+            apply_now: index === 0
+          }))
+          : [
+            {
+              rank: 1,
+              company: "Target Tech",
+              logo_initial: "T",
+              role: candidateProfile?.matchingRoles?.[0] || "Software Engineer",
+              match_score: 95,
+              match_label: "Strong Match",
+              matched_skills: candidateProfile.skills?.slice(0, 4) || ["Problem Solving", "React", "TypeScript", "Algorithms"],
+              missing_skills: ["System Design"],
+              required_skills_for_this_role: ["Algorithms", "System Design"],
+              interview_difficulty: "Medium",
+              interview_rounds: ["DSA Screening", "System Design", "Behavioral"],
+              time_to_prepare: "4 weeks",
+              naya_advice: "Your skills are well aligned. Focus on reviewing core patterns for the interview.",
+              alya_advice: "Your skills are well aligned. Focus on reviewing core patterns for the interview.",
+              apply_now: true
+            }
+          ],
         overall_insight: "Strong overall profile for targeted companies aligned with your resume.",
         immediate_action: "Start preparing for relevant technical rounds."
       };
-      
+
       res.json(fallbackMatch);
     }
   });
@@ -2370,7 +2552,7 @@ Return ONLY this JSON:
       else if (cleanText.startsWith("\`\`\`")) cleanText = cleanText.substring(3);
       if (cleanText.endsWith("\`\`\`")) cleanText = cleanText.substring(0, cleanText.length - 3);
       cleanText = cleanText.trim();
-      
+
       const parsedData = JSON.parse(cleanText);
       questionCache.set(cacheKey, parsedData);
       res.json(parsedData);
@@ -2408,7 +2590,7 @@ Return ONLY this JSON:
 
   app.post("/api/interview/greeting", authenticate, async (req, res) => {
     const { company, interviewer, candidate, role, time } = req.body;
-    
+
     try {
       if (!process.env.GEMINI_API_KEY) {
         return res.json({
@@ -2489,7 +2671,7 @@ Return ONLY this JSON:
   "ambient_audio": "soft office hum, distant keyboard typing",
   "room_details": "${company || "Tech Company"} office boardroom, morning light, city view window"
 }`;
-      
+
       const response = await ai.models.generateContent({
         model: "gemini-3.6-flash",
         contents: prompt,
@@ -2512,8 +2694,8 @@ Return ONLY this JSON:
                     pause_after_seconds: { type: Type.NUMBER },
                     wait_for_candidate_response: { type: Type.BOOLEAN },
                     expected_response_keywords: {
-                       type: Type.ARRAY,
-                       items: { type: Type.STRING }
+                      type: Type.ARRAY,
+                      items: { type: Type.STRING }
                     }
                   },
                   required: ["step", "trigger", "avatar_says", "avatar_animation", "pause_after_seconds", "wait_for_candidate_response"]
@@ -2526,7 +2708,7 @@ Return ONLY this JSON:
           }
         }
       });
-      
+
       const responseText = response.text || "";
       res.json(JSON.parse(responseText.trim()));
     } catch (error) {
@@ -2626,7 +2808,7 @@ Return ONLY this JSON, nothing else:
       else if (cleanText.startsWith("\`\`\`")) cleanText = cleanText.substring(3);
       if (cleanText.endsWith("\`\`\`")) cleanText = cleanText.substring(0, cleanText.length - 3);
       cleanText = cleanText.trim();
-      
+
       const parsedData = JSON.parse(cleanText);
       res.json(parsedData);
     } catch (e) {
@@ -2955,6 +3137,23 @@ Produce the complete evaluation of the interview in this JSON:
     }
   });
 
+  // ── Interview Question Generation (personalized, ESCO-grounded) ──────────
+  app.post("/api/interview/generate", authenticate, async (req, res) => {
+    const { resumeProfile, matchedJob } = req.body;
+
+    if (!resumeProfile?.domain || !matchedJob?.title) {
+      return res.status(400).json({ error: "MISSING_INPUT" });
+    }
+
+    try {
+      const result = await generateInterviewQuestions({ resumeProfile, matchedJob });
+      res.json(result);
+    } catch (e: any) {
+      console.error("[InterviewGen] fatal", e);
+      res.status(500).json({ error: "GENERATION_FAILED" });
+    }
+  });
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
@@ -2970,55 +3169,55 @@ Produce the complete evaluation of the interview in this JSON:
     });
   }
 
-    app.listen(PORT, "0.0.0.0", async () => {
-      console.log(`Server running on http://localhost:${PORT}`);
-      await verifyExternalServices();
-    });
+  app.listen(PORT, "0.0.0.0", async () => {
+    console.log(`Server running on http://localhost:${PORT}`);
+    await verifyExternalServices();
+  });
+}
+
+async function verifyExternalServices() {
+  const isGeminiConfigured = Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim() !== '' && process.env.GEMINI_API_KEY !== 'MY_GEMINI_API_KEY');
+  const isAdzunaConfigured = Boolean(process.env.ADZUNA_APP_ID && process.env.ADZUNA_APP_KEY);
+  console.log(`Gemini configured: ${isGeminiConfigured}`);
+  console.log(`Supabase configured: ${isSupabaseConfigured}`);
+  console.log(`Adzuna configured: ${isAdzunaConfigured}`);
+
+  if (isGeminiConfigured) {
+    // NOTE: Call directly (not via retryWithBackoff) so a quota error during startup
+    // does NOT arm the circuit breaker and break every subsequent request.
+    try {
+      console.log("[GEMINI API Test] Executing minimal API call...");
+      const response = await ai.models.generateContent({
+        model: "gemini-3.6-flash",
+        contents: "Respond with exact text: OK",
+      });
+      console.log(`[GEMINI API Test] Result: SUCCESS (Response: "${response.text?.trim()}")`);
+    } catch (err: any) {
+      const isQuota = checkIsQuotaError(err);
+      console.warn(`[GEMINI API Test] Result: ${isQuota ? "QUOTA_EXCEEDED" : "ERROR"} (${err.message || String(err)})`);
+      // Do NOT throw — a startup quota error must not poison the circuit breaker.
+    }
+  } else {
+    console.log("[GEMINI API Test] Result: SKIPPED (GEMINI_API_KEY not configured)");
   }
 
-  async function verifyExternalServices() {
-    const isGeminiConfigured = Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim() !== '' && process.env.GEMINI_API_KEY !== 'MY_GEMINI_API_KEY');
-    const isAdzunaConfigured = Boolean(process.env.ADZUNA_APP_ID && process.env.ADZUNA_APP_KEY);
-    console.log(`Gemini configured: ${isGeminiConfigured}`);
-    console.log(`Supabase configured: ${isSupabaseConfigured}`);
-    console.log(`Adzuna configured: ${isAdzunaConfigured}`);
-
-    if (isGeminiConfigured) {
-      // NOTE: Call directly (not via retryWithBackoff) so a quota error during startup
-      // does NOT arm the circuit breaker and break every subsequent request.
-      try {
-        console.log("[GEMINI API Test] Executing minimal API call...");
-        const response = await ai.models.generateContent({
-          model: "gemini-3.6-flash",
-          contents: "Respond with exact text: OK",
-        });
-        console.log(`[GEMINI API Test] Result: SUCCESS (Response: "${response.text?.trim()}")`);
-      } catch (err: any) {
-        const isQuota = checkIsQuotaError(err);
-        console.warn(`[GEMINI API Test] Result: ${isQuota ? "QUOTA_EXCEEDED" : "ERROR"} (${err.message || String(err)})`);
-        // Do NOT throw — a startup quota error must not poison the circuit breaker.
+  if (isSupabaseConfigured) {
+    try {
+      console.log("[Supabase Test] Executing minimal connection check...");
+      const { data, error } = await supabase.from('esco_skills').select('*').limit(1);
+      if (error) {
+        console.warn(`[Supabase Test] Result: ERROR (${error.message})`);
+      } else {
+        console.log("[Supabase Test] Result: SUCCESS (Connected to Supabase public.esco_skills table)");
       }
-    } else {
-      console.log("[GEMINI API Test] Result: SKIPPED (GEMINI_API_KEY not configured)");
+    } catch (err: any) {
+      console.warn(`[Supabase Test] Result: ERROR (${err.message || String(err)})`);
     }
-
-    if (isSupabaseConfigured) {
-      try {
-        console.log("[Supabase Test] Executing minimal connection check...");
-        const { data, error } = await supabase.from('esco_skills').select('*').limit(1);
-        if (error) {
-          console.warn(`[Supabase Test] Result: ERROR (${error.message})`);
-        } else {
-          console.log("[Supabase Test] Result: SUCCESS (Connected to Supabase public.esco_skills table)");
-        }
-      } catch (err: any) {
-        console.warn(`[Supabase Test] Result: ERROR (${err.message || String(err)})`);
-      }
-    } else {
-      console.log("[Supabase Test] Result: SKIPPED (SUPABASE_URL / SUPABASE_PUBLISHABLE_KEY not configured)");
-    }
+  } else {
+    console.log("[Supabase Test] Result: SKIPPED (SUPABASE_URL / SUPABASE_PUBLISHABLE_KEY not configured)");
   }
+}
 
-  startServer();
+startServer();
 
 

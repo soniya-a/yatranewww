@@ -10,8 +10,7 @@ import {
   TrendingUp, AlertTriangle, Lock
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { db, auth, getDocsWithTimeout } from "../lib/firebase";
-import { collection, query, where } from "firebase/firestore";
+import { supabase } from "../lib/supabase";
 import { LiveJobsView } from "../components/LiveJobsView";
 import { CandidateProfile } from "../types/candidateProfile";
 import { buildCanonicalProfile } from "../lib/profile/candidateProfileBuilder";
@@ -124,6 +123,7 @@ export default function Home() {
   // Mobile detection
   const [isMobile, setIsMobile] = useState(false);
   const [userEmail, setUserEmail] = useState("");
+  const [userName, setUserName] = useState("Student");
 
   // Tab navigation
   const [activeTab, setActiveTab] = useState<"home" | "resume" | "live-jobs" | "interview" | "roadmap">("home");
@@ -134,11 +134,26 @@ export default function Home() {
   const [interviewSession, setInterviewSession] = useState<any>(null);
   const [isLoadingInterview, setIsLoadingInterview] = useState(false);
 
+  const getAuthContext = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    const uid = session?.user?.id || localStorage.getItem("guest_uid") || "guest-user-123";
+    const name = session?.user?.user_metadata?.full_name || localStorage.getItem("guest_name") || "Student";
+    const email = session?.user?.email || localStorage.getItem("guest_email") || "Student";
+    const token = session?.access_token || (() => {
+      const payload = { user_id: uid };
+      const payloadB64 = btoa(JSON.stringify(payload)).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+      return `header.${payloadB64}.signature`;
+    })();
+    return { session, uid, name, email, token };
+  };
+
   // ── Effects ──────────────────────────────────────────────────────────────
 
   useEffect(() => {
-    const handleDeviceCheck = () => {
-      setUserEmail(auth.currentUser?.email || localStorage.getItem("guest_email") || "Student");
+    const handleDeviceCheck = async () => {
+      const { email, name } = await getAuthContext();
+      setUserEmail(email);
+      setUserName(name);
       setIsMobile(window.innerWidth < 1024);
     };
     handleDeviceCheck();
@@ -203,6 +218,60 @@ export default function Home() {
         handleParseResume(text);
       };
       reader.readAsText(file);
+    } else if (ext === 'docx' || ext === 'doc') {
+      setIsParsingResume(true);
+      setParseError(null);
+      setAiThinkingStep(1);
+      setAiThinkingProgress("Uploading Word document & extracting text...");
+
+      const reader = new FileReader();
+      reader.onload = async (event) => {
+        try {
+          const base64 = event.target?.result as string;
+          const { token } = await getAuthContext();
+
+          const extractRes = await fetch("/api/resume/extract-docx", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${token}`
+            },
+            body: JSON.stringify({ docxBase64: base64, filename: file.name })
+          });
+
+          const extractData = await extractRes.json();
+
+          if (!extractRes.ok || !extractData.success || !extractData.text) {
+            setParseResult(null);
+            setMlParseResult(null);
+            setCandidateSkills("");
+            setSelectedCompany("");
+            setSelectedRole("");
+            setResumeInput("");
+            setIsParsingResume(false);
+            setAiThinkingStep(0);
+            const errMsg = extractData.error?.message || "We couldn't read the text from this DOCX file. Try uploading a PDF or pasting the resume text instead.";
+            setParseError(errMsg);
+            return;
+          }
+
+          const extractedText = extractData.text;
+          setResumeInput(extractedText);
+          setParseError(null);
+          handleParseResume(extractedText);
+        } catch (err: any) {
+          setParseResult(null);
+          setMlParseResult(null);
+          setCandidateSkills("");
+          setSelectedCompany("");
+          setSelectedRole("");
+          setResumeInput("");
+          setIsParsingResume(false);
+          setAiThinkingStep(0);
+          setParseError("We couldn't extract text from this DOCX. Try uploading a PDF or plain text instead.");
+        }
+      };
+      reader.readAsDataURL(file);
     } else if (ext === 'pdf') {
       // 2. Validate actual binary file bytes (PDF magic bytes: %PDF -> 0x25, 0x50, 0x44, 0x46)
       try {
@@ -245,12 +314,7 @@ export default function Home() {
       reader.onload = async (event) => {
         try {
           const base64 = event.target?.result as string;
-          const uid = auth.currentUser?.uid || localStorage.getItem("guest_uid") || "guest-user-123";
-          const token = (auth.currentUser ? await auth.currentUser.getIdToken() : null) || (() => {
-            const payload = { user_id: uid };
-            const payloadB64 = btoa(JSON.stringify(payload)).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
-            return `header.${payloadB64}.signature`;
-          })();
+          const { token } = await getAuthContext();
 
           const extractRes = await fetch("/api/resume/extract-pdf", {
             method: "POST",
@@ -296,23 +360,40 @@ export default function Home() {
       };
       reader.readAsDataURL(file);
     } else {
-      setParseError("Unsupported file format. Please upload a PDF (.pdf) or plain text (.txt).");
+      setParseError("Unsupported file format. Please upload a PDF (.pdf), Word document (.docx), or plain text (.txt).");
     }
   };
 
   const fetchSavedRoadmaps = async () => {
-    const uid = auth.currentUser?.uid || localStorage.getItem("guest_uid") || "guest-user-123";
+    const { session, uid } = await getAuthContext();
     try {
-      if (auth.currentUser && !localStorage.getItem("guest_session")) {
-        const q = query(collection(db, "roadmaps"), where("userId", "==", uid));
-        const snap = await getDocsWithTimeout(q);
-        const loaded = snap.docs.map(d => ({ id: d.id, ...d.data() })) as CareerRoadmap[];
-        loaded.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-        setSavedRoadmaps(loaded);
-      } else {
-        const local = localStorage.getItem(`roadmaps_${uid}`);
-        if (local) setSavedRoadmaps(JSON.parse(local));
+      if (session?.user && !localStorage.getItem("guest_session")) {
+        const { data, error } = await supabase
+          .from("roadmaps")
+          .select("*")
+          .eq("user_id", uid)
+          .order("created_at", { ascending: false });
+        if (error) throw error;
+        if (data && data.length > 0) {
+          const loaded = data.map(d => ({
+            id: d.id,
+            roadmap_title: d.roadmap_title,
+            student_name: d.student_name,
+            target: d.target,
+            start_message: d.start_message,
+            weeks: d.weeks,
+            milestones: d.milestones,
+            daily_routine: d.daily_routine,
+            final_week_checklist: d.final_week_checklist,
+            confidence_message: d.confidence_message,
+            createdAt: new Date(d.created_at).getTime()
+          })) as CareerRoadmap[];
+          setSavedRoadmaps(loaded);
+          return;
+        }
       }
+      const local = localStorage.getItem(`roadmaps_${uid}`);
+      if (local) setSavedRoadmaps(JSON.parse(local));
     } catch (e) {
       const local = localStorage.getItem(`roadmaps_${uid}`);
       if (local) setSavedRoadmaps(JSON.parse(local));
@@ -321,18 +402,36 @@ export default function Home() {
 
   const fetchInterviewReports = async () => {
     setIsLoadingReports(true);
-    const uid = auth.currentUser?.uid || localStorage.getItem("guest_uid") || "guest-user-123";
+    const { session, uid } = await getAuthContext();
     try {
-      if (auth.currentUser && !localStorage.getItem("guest_session")) {
-        const q = query(collection(db, "interviews"), where("userId", "==", uid));
-        const snap = await getDocsWithTimeout(q);
-        const loaded = snap.docs.map(d => ({ id: d.id, ...d.data() })) as SavedInterviewReport[];
-        loaded.sort((a, b) => b.createdAt - a.createdAt);
-        setSavedReports(loaded);
-      } else {
-        const local = localStorage.getItem(`interviews_${uid}`);
-        if (local) setSavedReports(JSON.parse(local));
+      if (session?.user && !localStorage.getItem("guest_session")) {
+        const { data, error } = await supabase
+          .from("interviews")
+          .select("*")
+          .eq("user_id", uid)
+          .order("created_at", { ascending: false });
+        if (error) throw error;
+        if (data && data.length > 0) {
+          const loaded = data.map(d => ({
+            id: d.id,
+            userId: d.user_id,
+            role: d.role,
+            company: d.company,
+            score: Number(d.score),
+            feedback: d.feedback,
+            strengths: d.strengths,
+            weaknesses: d.weaknesses,
+            transcript: d.transcript,
+            hiring_decision: d.hiring_decision,
+            percentile_estimate: Number(d.percentile_estimate),
+            createdAt: new Date(d.created_at).getTime()
+          })) as SavedInterviewReport[];
+          setSavedReports(loaded);
+          return;
+        }
       }
+      const local = localStorage.getItem(`interviews_${uid}`);
+      if (local) setSavedReports(JSON.parse(local));
     } catch (e) {
       const local = localStorage.getItem(`interviews_${uid}`);
       if (local) setSavedReports(JSON.parse(local));
@@ -363,12 +462,7 @@ export default function Home() {
     });
 
     try {
-      const uid = auth.currentUser?.uid || localStorage.getItem("guest_uid") || "guest-user-123";
-      const token = (auth.currentUser ? await auth.currentUser.getIdToken() : null) || (() => {
-        const payload = { user_id: uid };
-        const payloadB64 = btoa(JSON.stringify(payload)).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
-        return `header.${payloadB64}.signature`;
-      })();
+      const { token } = await getAuthContext();
 
       const [parseRes, parseMlRes] = await Promise.all([
         fetch("/api/resume/parse", {
@@ -453,12 +547,7 @@ export default function Home() {
     setRoadmapError(null);
     setGeneratedRoadmap(null);
     try {
-      const uid = auth.currentUser?.uid || localStorage.getItem("guest_uid") || "guest-user-123";
-      const token = (auth.currentUser ? await auth.currentUser.getIdToken() : null) || (() => {
-        const payload = { user_id: uid };
-        const payloadB64 = btoa(JSON.stringify(payload)).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
-        return `header.${payloadB64}.signature`;
-      })();
+      const { session, uid, token, name } = await getAuthContext();
 
       const res = await fetch("/api/roadmap/generate", {
         method: "POST",
@@ -470,7 +559,7 @@ export default function Home() {
           role: roleToUse,
           duration: selectedDuration,
           profile: {
-            student_name: auth.currentUser?.displayName || "Student",
+            student_name: name,
             target_company: companyToUse,
             current_skills: candidateSkills,
             missing_skills: deepMatchResult?.companies?.find((c: any) => c.company === companyToUse)?.missing_skills?.join(", ") || "Advanced concepts",
@@ -482,6 +571,30 @@ export default function Home() {
       if (!res.ok) throw new Error("Roadmap generation limit hit.");
       const roadmapData = await res.json();
       setGeneratedRoadmap(roadmapData);
+
+      // Persist to Supabase if session active
+      try {
+        if (session?.user && !localStorage.getItem("guest_session")) {
+          await supabase.from("roadmaps").insert([{
+            user_id: uid,
+            roadmap_title: roadmapData.roadmap_title || "Engineering Roadmap",
+            student_name: roadmapData.student_name || name,
+            target: roadmapData.target || roleToUse,
+            start_message: roadmapData.start_message || "",
+            weeks: roadmapData.weeks || [],
+            milestones: roadmapData.milestones || [],
+            daily_routine: roadmapData.daily_routine || {},
+            final_week_checklist: roadmapData.final_week_checklist || [],
+            confidence_message: roadmapData.confidence_message || ""
+          }]);
+        }
+        const cached = localStorage.getItem(`roadmaps_${uid}`);
+        const currentList = cached ? JSON.parse(cached) : [];
+        localStorage.setItem(`roadmaps_${uid}`, JSON.stringify([roadmapData, ...currentList]));
+        fetchSavedRoadmaps();
+      } catch (saveErr) {
+        console.warn("Could not persist generated roadmap to database:", saveErr);
+      }
     } catch (err) {
       setRoadmapError("Roadmap generation is currently unavailable. Please try again later.");
     } finally {
@@ -497,12 +610,7 @@ export default function Home() {
     setIsLoadingInterview(true);
 
     try {
-      const uid = auth.currentUser?.uid || localStorage.getItem("guest_uid") || "guest-user-123";
-      const token = (auth.currentUser ? await auth.currentUser.getIdToken() : null) || (() => {
-        const payload = { user_id: uid };
-        const payloadB64 = btoa(JSON.stringify(payload)).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
-        return `header.${payloadB64}.signature`;
-      })();
+      const { token } = await getAuthContext();
 
       const res = await fetch("/api/interview/job-session", {
         method: "POST",
@@ -795,8 +903,8 @@ export default function Home() {
               <ChevronDown className="w-4 h-4 text-[#64748b] hidden md:block" />
             </div>
             <button 
-              onClick={() => {
-                auth.signOut();
+              onClick={async () => {
+                await supabase.auth.signOut();
                 localStorage.removeItem("guest_session");
                 localStorage.removeItem("guest_email");
                 window.location.reload();
@@ -1019,11 +1127,11 @@ export default function Home() {
                             <span className="text-xs font-bold text-emerald-700">Profile Detected</span>
                           </div>
                           <h3 className="text-lg font-bold text-[#0f172a]">
-                            {auth.currentUser?.displayName || "Student"}
+                            {userName}
                           </h3>
                         </div>
                         <div className="w-12 h-12 rounded-full bg-[#2563eb] flex items-center justify-center text-white font-bold text-base">
-                          {(auth.currentUser?.displayName || "S")[0].toUpperCase()}
+                          {(userName || "S")[0].toUpperCase()}
                         </div>
                       </div>
 

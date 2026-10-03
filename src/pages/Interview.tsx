@@ -3,8 +3,7 @@ import { useEffect, useState, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { ArrowLeft, Mic, MicOff, Clock, Send, Loader2, Award, ClipboardCheck, Sparkles, Check, CheckCircle, ChevronRight, BookOpen, AlertCircle, Sun, Volume2, ZoomIn, ZoomOut, Smartphone, Layers } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { auth, db } from '../lib/firebase';
-import { collection, addDoc } from 'firebase/firestore';
+import { supabase } from '../lib/supabase';
 import { VRScene } from "../components/VRScene";
 
 // Register a custom A-Frame component to bend bones & perfectly seat typical readyplayer.me standing avatars.
@@ -1111,7 +1110,8 @@ export default function Interview() {
     setInputText("");
     
     try {
-      const token = (auth.currentUser ? await auth.currentUser.getIdToken() : null) || (() => {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token || (() => {
         const payload = { user_id: "guest-user-123" };
         const payloadB64 = btoa(JSON.stringify(payload))
           .replace(/=/g, "")
@@ -1339,7 +1339,8 @@ export default function Interview() {
     let speechPrefix = "";
     
     try {
-      const token = (auth.currentUser ? await auth.currentUser.getIdToken() : null) || (() => {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token || (() => {
         const payload = { user_id: "guest-user-123" };
         const payloadB64 = btoa(JSON.stringify(payload)).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
         return `header.${payloadB64}.signature`;
@@ -1518,9 +1519,10 @@ export default function Interview() {
     setGradeResult(null);
     setSaveSuccess(false);
 
-    const uid = auth.currentUser?.uid || localStorage.getItem("guest_uid") || "guest-user-123";
+    const { data: { session } } = await supabase.auth.getSession();
+    const uid = session?.user?.id || localStorage.getItem("guest_uid") || "guest-user-123";
     try {
-      const token = (auth.currentUser ? await auth.currentUser.getIdToken() : null) || (() => {
+      const token = session?.access_token || (() => {
         const payload = { user_id: uid };
         const payloadB64 = btoa(JSON.stringify(payload))
           .replace(/=/g, "")
@@ -1559,7 +1561,7 @@ export default function Interview() {
             'Authorization': `Bearer ${token}`
           },
           body: JSON.stringify({
-            candidate: auth.currentUser?.displayName || localStorage.getItem("userName") || "Candidate",
+            candidate: session?.user?.user_metadata?.full_name || localStorage.getItem("userName") || "Candidate",
             company: targetCompany,
             role: targetRole,
             scores: reportCard.scores
@@ -1589,14 +1591,26 @@ export default function Interview() {
 
       // Store securely in database / fallback local storage
       try {
-        if (auth.currentUser && !localStorage.getItem("guest_session")) {
-          await addDoc(collection(db, "interviews"), payload);
+        if (session?.user && !localStorage.getItem("guest_session")) {
+          const { error: insertError } = await supabase.from('interviews').insert([{
+            user_id: uid,
+            role: targetRole,
+            company: targetCompany,
+            score: reportCard.overall_score || 85,
+            feedback: reportCard.naya_personal_message || reportCard.alya_personal_message || "Splendid mock interaction history.",
+            strengths: reportCard.top_3_strengths || ["In-depth technical conceptual breakdowns"],
+            weaknesses: reportCard.top_3_weak_areas || ["Could elaborate on scaling parameters and testing"],
+            transcript: chatHistory,
+            hiring_decision: reportCard.hiring_decision,
+            percentile_estimate: reportCard.percentile_estimate
+          }]);
+          if (insertError) throw insertError;
         } else {
           throw new Error("Guest active");
         }
         setSaveSuccess(true);
       } catch (e) {
-        console.warn("Saving directly to Firestore skipped. Writing to local storage lists.");
+        console.warn("Saving directly to Supabase skipped. Writing to local storage lists.", e);
         const cached = localStorage.getItem(`interviews_${uid}`);
         const currentList = cached ? JSON.parse(cached) : [];
         const savedItem = { id: `local-interview-${Date.now()}`, ...payload };

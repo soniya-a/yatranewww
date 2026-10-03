@@ -5,7 +5,7 @@ export interface CompanyJob {
   id: string;
   company: string;
   role: string;
-  category: "aiml" | "datascience" | "technical" | "mechanical" | "civil" | "architecture" | "accounting" | "banking" | "startup";
+  category: "aiml" | "datascience" | "technical" | "mechanical" | "civil" | "electrical" | "architecture" | "accounting" | "banking" | "startup";
   isStartup: boolean;
   requirements: string[];
   description: string;
@@ -146,6 +146,32 @@ const CATEGORIES_DATA = {
     reasons: [
       "Strong ETABS foundations and RCC beam calculation knowledge map cleanly to our core urban high-rise design group.",
       "Detailed familiarity with Soil Mechanics and Geotechnical surveying parameters fits directly into our deep-tunnel foundation division."
+    ]
+  },
+  electrical: {
+    companies: [
+      "ABB India", "Siemens India", "Schneider Electric", "L&T Electrical & Automation", 
+      "BHEL", "Tata Power", "Havells India", "CG Power", "Delta Power Controls", 
+      "Crompton Greaves", "Alstom India", "Suzlon Energy", "Hitachi Energy", "Eaton Electrical"
+    ],
+    roles: [
+      "Graduate Electrical Engineer Trainee", "Power Systems & Automation Engineer", 
+      "Electrical Design Engineer", "PLC & SCADA Automation Engineer", 
+      "Protection & Switchgear Engineer", "Renewable Energy Systems Engineer"
+    ],
+    requirements: [
+      "Single Line Diagrams (SLD)", "PLC Programming (Ladder Logic)", "SCADA System Integration",
+      "Power Distribution & Switchgear", "Relay Coordination & Protection", "MATLAB Simulink Modeling",
+      "AutoCAD Electrical", "Siemens TIA Portal / ETAP"
+    ],
+    descriptions: [
+      "Design, simulate, and inspect high-voltage power distribution networks, panel wiring, and automation control centers.",
+      "Program Siemens/Allen-Bradley PLCs and integrate SCADA monitoring dashboards for power sub-stations.",
+      "Model grid-tied renewable energy systems and execute electrical protection relay coordination."
+    ],
+    reasons: [
+      "Your background in power distribution, SLD drafting, and MATLAB Simulink modeling aligns perfectly with our power engineering team.",
+      "Strong expertise in PLC-SCADA automation and switchgear inspection fits our industrial automation division requirements."
     ]
   },
   architecture: {
@@ -338,6 +364,14 @@ export function matchResumeToRegistry(resumeText: string, searchCategory?: strin
       "construction management", "site engineer", "site management", "drainage", "highway",
       "bridge", "revit structure", "primavera"
     ],
+    electrical: [
+      "electrical engineer", "electrical engineering", "electrical & electronics", "eee",
+      "power systems", "switchgear", "transformers", "substation", "high voltage", "power electronics",
+      "plc programming", "plc", "scada", "motor drives", "matlab simulink", "simulink", "matlab/simulink",
+      "protection relay", "single line diagram", "sld", "autocad electrical", "etap", "proteus",
+      "siemens tia", "power factor", "apfc", "inverter", "solar grid", "panel wiring",
+      "switchgear inspection", "relay coordination"
+    ],
     aiml: [
       "machine learning", "deep learning", "pytorch", "tensorflow", "neural network",
       "transformer", "large language model", "llm", "huggingface", "computer vision",
@@ -378,6 +412,7 @@ export function matchResumeToRegistry(resumeText: string, searchCategory?: strin
   const scores: Record<string, number> = {
     mechanical: 0,
     civil: 0,
+    electrical: 0,
     aiml: 0,
     datascience: 0,
     technical: 0,
@@ -402,6 +437,7 @@ export function matchResumeToRegistry(resumeText: string, searchCategory?: strin
   // Explicit title boosts
   if (/\bmechanical (design )?engineer\b/i.test(norm)) scores.mechanical += 30;
   if (/\b(civil|structural) engineer\b/i.test(norm)) scores.civil += 30;
+  if (/\b(electrical|electronics & electrical|eee) (design |trainee )?engineer\b/i.test(norm) || /\bpower systems\b/i.test(norm)) scores.electrical += 30;
   if (/\b(machine learning|ml) engineer\b/i.test(norm) || /\bai research\b/i.test(norm)) scores.aiml += 30;
   if (/\bdata (scientist|analyst)\b/i.test(norm)) scores.datascience += 30;
   if (/\bsoftware (engineer|developer)\b/i.test(norm) || /\bfull-?stack\b/i.test(norm)) scores.technical += 30;
@@ -421,7 +457,9 @@ export function matchResumeToRegistry(resumeText: string, searchCategory?: strin
     }
     // If no keywords matched at all, check for general domain words
     if (highestScore === 0) {
-      if (norm.includes("mechanic") || norm.includes("cad") || norm.includes("machine")) {
+      if (norm.includes("electrical") || norm.includes("eee") || norm.includes("scada") || norm.includes("plc")) {
+        topCategory = "electrical";
+      } else if (norm.includes("mechanic") || norm.includes("solidworks")) {
         topCategory = "mechanical";
       } else if (norm.includes("civil") || norm.includes("construct") || norm.includes("structure")) {
         topCategory = "civil";
