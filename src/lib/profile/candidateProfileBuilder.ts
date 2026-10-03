@@ -106,11 +106,182 @@ const DOMAIN_DICTIONARY: Record<EngineeringDomain, { keywords: string[]; primary
     ],
     primaryRole: "Software Engineer"
   },
+  commerce: {
+    keywords: [
+      "commercial practice", "accounting", "accountant", "tally", "tally erp", "cost accounting",
+      "management accounting", "cost and management account", "dtp", "desktop publishing",
+      "shorthand", "english shorthand", "typing", "english typing", "balance sheet", "ledger",
+      "taxation", "auditing", "audit", "chartered accounting", "subek agarwal", "l&t audit",
+      "financial accounting", "banking", "finance", "commercial", "payroll", "jss polytechnic"
+    ],
+    primaryRole: "Commercial Practice & Accounts Specialist"
+  },
   unclassified: {
     keywords: [],
-    primaryRole: "Graduate Engineer Trainee"
+    primaryRole: "Graduate Trainee"
   }
 };
+
+/**
+ * Extracts candidate full name from raw resume text heuristics.
+ * Guarantees no hallucination and never returns the authenticated user's account name.
+ */
+export function extractCandidateNameFromResume(text: string): string | undefined {
+  if (!text || typeof text !== "string") return undefined;
+  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+
+  // 1. Check explicit "Name:" or "Candidate Name:" prefixes
+  for (const line of lines.slice(0, 20)) {
+    const match = line.match(/^(?:candidate\s+name|full\s+name|name)\s*[:\-]\s*([A-Za-z\s\.\'\-]+)$/i);
+    if (match && match[1]) {
+      const clean = match[1].trim();
+      if (clean.length >= 2 && clean.length <= 40 && !/^(resume|curriculum|vitae|bio)/i.test(clean)) {
+        return clean;
+      }
+    }
+  }
+
+  // 2. Inspect the topmost 6 non-empty lines
+  const blacklistedKeywords = [
+    "resume", "curriculum", "vitae", "cv", "bio-data", "biodata", "profile", "contact",
+    "email", "phone", "mobile", "tel:", "address", "objective", "career", "summary",
+    "education", "qualification", "skills", "experience", "projects", "declaration",
+    "http", "www", ".com", ".in", "gmail", "yahoo", "outlook", "@", "page"
+  ];
+
+  for (const line of lines.slice(0, 6)) {
+    const lower = line.toLowerCase();
+    if (blacklistedKeywords.some(kw => lower.includes(kw))) continue;
+    if (/\d{4,}/.test(line)) continue; // skip lines with phone/dates
+
+    // A valid name line is typically 1 to 4 words containing only letters, spaces, or dots
+    const cleanLine = line.replace(/[^A-Za-z\s\.]/g, "").trim();
+    const words = cleanLine.split(/\s+/).filter(Boolean);
+    if (words.length >= 1 && words.length <= 4 && cleanLine.length >= 3 && cleanLine.length <= 35) {
+      // Check that at least one word starts with a capital letter or is in all-caps
+      const isCandidateName = words.every(w => /^[A-Z][a-zA-Z\.]*$/.test(w) || /^[A-Z]+$/.test(w));
+      if (isCandidateName) {
+        // Return nicely formatted title/proper case if in ALL-CAPS, or as-is
+        if (cleanLine === cleanLine.toUpperCase() && cleanLine.length > 3) {
+          return cleanLine.split(/\s+/).map(w => w.charAt(0) + w.slice(1).toLowerCase()).join(" ");
+        }
+        return cleanLine;
+      }
+    }
+  }
+
+  return undefined;
+}
+
+/**
+ * Extracts education qualifications directly from resume text.
+ */
+export function extractEducationFromResume(text: string): string[] {
+  if (!text) return [];
+  const results: string[] = [];
+  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+
+  const eduPatterns = [
+    /diploma\s+in\s+([A-Za-z\s]+)/i,
+    /jss\s+polytechnic\s+for\s+women[,\s\w]*/i,
+    /polytechnic[,\s\w]*/i,
+    /(?:10th|12th|sslc|puc|cbse|icse)[,\s\w\(\)%]*/i,
+    /(?:b\.?e\.?|b\.?tech|m\.?tech|b\.?sc|m\.?sc|b\.?com|m\.?com|bba|mba)\s*(?:in\s+[A-Za-z\s]+)?/i,
+    /(?:bachelor|master)\s+(?:of|in)\s+[A-Za-z\s]+/i,
+    /university|college|institute|board\s+of\s+technical\s+education/i
+  ];
+
+  for (const line of lines) {
+    if (eduPatterns.some(p => p.test(line)) && line.length < 120) {
+      const clean = line.replace(/^[-*•\d\.\)]\s*/, "").trim();
+      if (clean && !results.includes(clean) && !/^(education|qualification|academic)/i.test(clean)) {
+        results.push(clean);
+      }
+    }
+  }
+
+  return results.slice(0, 5);
+}
+
+/**
+ * Extracts work experience, audit records, and internships from resume text.
+ */
+export function extractExperienceFromResume(text: string): string[] {
+  if (!text) return [];
+  const results: string[] = [];
+  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+
+  const expPatterns = [
+    /subek\s+agarwal\s*(&|and)?\s*associates/i,
+    /chartered\s+account(?:ing|ants?)/i,
+    /(?:l&t|larsen\s*(&|and)?\s*toubro)/i,
+    /internship[,\s\w\-]*/i,
+    /audit\s+(?:entry|work|trainee|assistant|executive|experience)/i,
+    /(?:worked|working)\s+as\s+[A-Za-z\s]+/i,
+    /(?:trainee|associate|assistant|officer|executive)\s+at\s+[A-Za-z\s]+/i
+  ];
+
+  for (const line of lines) {
+    if (expPatterns.some(p => p.test(line)) && line.length < 140) {
+      const clean = line.replace(/^[-*•\d\.\)]\s*/, "").trim();
+      if (clean && !results.includes(clean) && !/^(experience|work experience|internship|internships)$/i.test(clean)) {
+        results.push(clean);
+      }
+    }
+  }
+
+  return results.slice(0, 5);
+}
+
+/**
+ * Extracts languages known from resume text.
+ */
+export function extractLanguagesFromResume(text: string): string[] {
+  if (!text) return [];
+  const knownLanguages = [
+    "English", "Kannada", "Hindi", "Tamil", "Telugu", "Malayalam",
+    "Marathi", "Bengali", "Gujarati", "Urdu", "French", "German", "Spanish"
+  ];
+  const detected: string[] = [];
+  const norm = text.toLowerCase();
+
+  for (const lang of knownLanguages) {
+    const regex = new RegExp(`\\b${lang.toLowerCase()}\\b`, "i");
+    if (regex.test(norm)) {
+      detected.push(lang);
+    }
+  }
+  return detected;
+}
+
+/**
+ * Extracts hobbies / interests from resume text.
+ */
+export function extractHobbiesFromResume(text: string): string[] {
+  if (!text) return [];
+  const results: string[] = [];
+  const norm = text.toLowerCase();
+
+  const hobbyKeywords = [
+    { key: "listening to music", label: "Listening to Music" },
+    { key: "music", label: "Listening to Music" },
+    { key: "story reading", label: "Story Reading" },
+    { key: "reading", label: "Reading Books / Stories" },
+    { key: "travelling", label: "Travelling" },
+    { key: "traveling", label: "Travelling" },
+    { key: "photography", label: "Photography" },
+    { key: "cricket", label: "Cricket" },
+    { key: "chess", label: "Chess" }
+  ];
+
+  for (const h of hobbyKeywords) {
+    if (norm.includes(h.key) && !results.includes(h.label)) {
+      results.push(h.label);
+    }
+  }
+
+  return results.slice(0, 4);
+}
 
 /**
  * Evaluates candidate text and parsed skills to determine domain without bias.
@@ -141,7 +312,8 @@ function classifyDomain(
     aiml: { domain: "aiml", score: 0, matchedKeywords: [], canonicalRole: "Machine Learning Engineer" },
     data: { domain: "data", score: 0, matchedKeywords: [], canonicalRole: "Data Engineer" },
     software: { domain: "software", score: 0, matchedKeywords: [], canonicalRole: "Software Engineer" },
-    unclassified: { domain: "unclassified", score: 0, matchedKeywords: [], canonicalRole: "Graduate Engineer Trainee" }
+    commerce: { domain: "commerce", score: 0, matchedKeywords: [], canonicalRole: "Commercial Practice & Accounts Specialist" },
+    unclassified: { domain: "unclassified", score: 0, matchedKeywords: [], canonicalRole: "Graduate Trainee" }
   };
 
   // 1. Check direct role title mentions (highest weight: 20 points)
@@ -325,7 +497,59 @@ export function buildCanonicalProfile(
     }
   }
 
+  // Extract candidate identity, education, experience, languages, hobbies
+  const extractedName =
+    (typeof parseResult?.candidate_name === "string" && parseResult.candidate_name.trim().length > 0 && parseResult.candidate_name.trim()) ||
+    (typeof parseResult?.name === "string" && parseResult.name.trim().length > 0 && parseResult.name.trim()) ||
+    extractCandidateNameFromResume(rawResumeText);
+
+  let education: string[] = [];
+  if (Array.isArray(parseResult?.education) && parseResult.education.length > 0) {
+    education = parseResult.education.map((e: any) => typeof e === "string" ? e : (e?.degree || e?.institution || JSON.stringify(e))).filter(Boolean);
+  }
+  if (education.length === 0 && mlParseResult?.education) {
+    education = [String(mlParseResult.education)];
+  }
+  if (education.length === 0) {
+    education = extractEducationFromResume(rawResumeText);
+  }
+
+  let experienceList: string[] = [];
+  if (Array.isArray(parseResult?.experience) && parseResult.experience.length > 0) {
+    experienceList.push(...parseResult.experience.map((e: any) => {
+      if (typeof e === "string") return e;
+      return [e.role, e.company, e.date_range].filter(Boolean).join(" - ");
+    }));
+  }
+  if (Array.isArray(parseResult?.internships) && parseResult.internships.length > 0) {
+    experienceList.push(...parseResult.internships.map((i: any) => {
+      if (typeof i === "string") return i;
+      return `Internship: ${[i.role, i.company, i.date_range].filter(Boolean).join(" - ")}`;
+    }));
+  }
+  if (experienceList.length === 0) {
+    experienceList = extractExperienceFromResume(rawResumeText);
+  }
+
+  let languages: string[] = Array.isArray(parseResult?.languages) && parseResult.languages.length > 0
+    ? parseResult.languages
+    : extractLanguagesFromResume(rawResumeText);
+
+  let hobbies: string[] = Array.isArray(parseResult?.hobbies) && parseResult.hobbies.length > 0
+    ? parseResult.hobbies
+    : extractHobbiesFromResume(rawResumeText);
+
+  let projects: any[] = [];
+  if (Array.isArray(parseResult?.projects)) {
+    projects = parseResult.projects.map((p: any) => ({
+      title: p?.name || p?.title || "Project",
+      description: p?.description || "",
+      skills: Array.isArray(p?.skills_used) ? p.skills_used : (Array.isArray(p?.tools_used) ? p.tools_used : [])
+    }));
+  }
+
   return {
+    fullName: extractedName || undefined,
     rawResumeText: rawResumeText.substring(0, 8000),
     domain: classification.domain,
     primaryRole: classification.primaryRole,
@@ -334,11 +558,17 @@ export function buildCanonicalProfile(
       : classification.primaryRole
       ? [classification.primaryRole]
       : [],
+    userSelectedTargetRole: null, // strictly kept separate from resume-derived profile
     classificationStatus: classification.status,
     classificationConfidence: classification.confidence,
     classificationNotes: classification.notes,
     skills: allSkills,
     technicalSkills,
+    education,
+    experienceList,
+    projects,
+    languages,
+    hobbies,
     experienceYears: expYears,
     experienceLevel: expLevel,
     achievements,

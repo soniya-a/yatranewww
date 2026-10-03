@@ -1,4 +1,4 @@
-import { supabase, isSupabaseConfigured } from './supabase';
+import { pool, isPostgresConfigured } from './db';
 
 export interface EscoSkillMapping {
   skill: string;
@@ -48,7 +48,7 @@ const ESCO_CONCEPT_EQUIVALENTS: Record<string, string> = {
  * Returns null if the skill has no direct counterpart in ESCO.
  */
 export async function resolveSkillToEsco(skill: string): Promise<EscoSkillMapping | null> {
-  if (!isSupabaseConfigured || !skill || typeof skill !== 'string') return null;
+  if (!isPostgresConfigured || !skill || typeof skill !== 'string') return null;
 
   const trimmed = skill.trim();
   if (trimmed.length === 0) return null;
@@ -57,36 +57,34 @@ export async function resolveSkillToEsco(skill: string): Promise<EscoSkillMappin
     // 1. Check known direct ESCO equivalent label
     const targetLabel = ESCO_CONCEPT_EQUIVALENTS[trimmed] || trimmed;
 
-    // 2. Exact match (case-insensitive)
-    const { data: exactMatch } = await supabase
-      .from('esco_skills')
-      .select('id, concept_uri, preferred_label')
-      .ilike('preferred_label', targetLabel)
-      .limit(1);
+    // 2. Exact match (case-insensitive) in PostgreSQL
+    const exactRes = await pool.query(
+      `SELECT id, concept_uri, preferred_label FROM esco_skills WHERE LOWER(preferred_label) = LOWER($1) LIMIT 1`,
+      [targetLabel]
+    );
 
-    if (exactMatch && exactMatch.length > 0) {
+    if (exactRes.rows.length > 0) {
       return {
         skill: trimmed,
-        escoId: exactMatch[0].id,
-        escoUri: exactMatch[0].concept_uri,
-        escoLabel: exactMatch[0].preferred_label
+        escoId: String(exactRes.rows[0].id),
+        escoUri: exactRes.rows[0].concept_uri,
+        escoLabel: exactRes.rows[0].preferred_label
       };
     }
 
     // 3. Try with "(computer programming)" qualifier if not already attempted
     if (!targetLabel.includes('(computer programming)')) {
-      const { data: progMatch } = await supabase
-        .from('esco_skills')
-        .select('id, concept_uri, preferred_label')
-        .ilike('preferred_label', `${trimmed} (computer programming)`)
-        .limit(1);
+      const progRes = await pool.query(
+        `SELECT id, concept_uri, preferred_label FROM esco_skills WHERE LOWER(preferred_label) = LOWER($1) LIMIT 1`,
+        [`${trimmed} (computer programming)`]
+      );
 
-      if (progMatch && progMatch.length > 0) {
+      if (progRes.rows.length > 0) {
         return {
           skill: trimmed,
-          escoId: progMatch[0].id,
-          escoUri: progMatch[0].concept_uri,
-          escoLabel: progMatch[0].preferred_label
+          escoId: String(progRes.rows[0].id),
+          escoUri: progRes.rows[0].concept_uri,
+          escoLabel: progRes.rows[0].preferred_label
         };
       }
     }
@@ -101,14 +99,14 @@ export async function resolveSkillToEsco(skill: string): Promise<EscoSkillMappin
 /**
  * Traverses the raw ESCO relationship graph to match normalized skills to ESCO occupations.
  * Strictly uses official foreign-key concept URIs:
- * skill -> esco_occupation_skill_relations -> esco_occupations.
+ * skill -> esco_occupation_skills -> esco_occupations.
  */
 export async function matchSkillsToEscoOccupations(
   normalizedSkills: string[],
   topLimit = 20
 ): Promise<EscoMatchingResult> {
-  if (!isSupabaseConfigured) {
-    throw new Error("Supabase is not configured. Cannot perform ESCO graph traversal.");
+  if (!isPostgresConfigured) {
+    throw new Error("PostgreSQL is not configured. Cannot perform ESCO graph traversal.");
   }
 
   const mappedSkills: EscoSkillMapping[] = [];
@@ -136,32 +134,40 @@ export async function matchSkillsToEscoOccupations(
     };
   }
 
-  // Step 2: Fetch all relations for mapped skill URIs
+  // Step 2: Fetch all relations for mapped skill URIs from PostgreSQL
   const skillUris = mappedSkills.map(m => m.escoUri);
   const skillUriToOriginalMap = new Map<string, string>();
   for (const m of mappedSkills) {
     skillUriToOriginalMap.set(m.escoUri, m.skill);
   }
 
-  const { data: relations, error: relError } = await supabase
-    .from('esco_occupation_skill_relations')
-    .select('occupation_uri, skill_uri')
-    .in('skill_uri', skillUris);
+  const relRes = await pool.query(
+    `SELECT occupation_uri, skill_uri, relation_type FROM esco_occupation_skills WHERE skill_uri = ANY($1)`,
+    [skillUris]
+  );
+  const relations = relRes.rows;
 
-  if (relError || !relations) {
-    throw new Error(`Failed to query esco_occupation_skill_relations: ${relError?.message}`);
-  }
-
-  // Step 3: Aggregate matched skills per occupation
+  // Step 3: Aggregate matched skills and relation types per occupation
   const occupationSkillMap = new Map<string, Set<string>>();
+  const occupationEssentialMap = new Map<string, Set<string>>();
+  const occupationOptionalMap = new Map<string, Set<string>>();
+
   for (const rel of relations) {
     const origSkill = skillUriToOriginalMap.get(rel.skill_uri);
     if (!origSkill) continue;
 
     if (!occupationSkillMap.has(rel.occupation_uri)) {
       occupationSkillMap.set(rel.occupation_uri, new Set<string>());
+      occupationEssentialMap.set(rel.occupation_uri, new Set<string>());
+      occupationOptionalMap.set(rel.occupation_uri, new Set<string>());
     }
     occupationSkillMap.get(rel.occupation_uri)!.add(origSkill);
+
+    if (rel.relation_type === 'essential') {
+      occupationEssentialMap.get(rel.occupation_uri)!.add(origSkill);
+    } else {
+      occupationOptionalMap.get(rel.occupation_uri)!.add(origSkill);
+    }
   }
 
   const totalOccupationsMatched = occupationSkillMap.size;
@@ -169,36 +175,45 @@ export async function matchSkillsToEscoOccupations(
   // Step 4: Sort occupations by raw matched count (descending) to find candidate top occupations
   const candidateOccs = Array.from(occupationSkillMap.entries())
     .sort((a, b) => b[1].size - a[1].size)
-    .slice(0, Math.max(topLimit * 2, 50)); // Take top slice to calculate accurate coverage
+    .slice(0, Math.max(topLimit * 2, 50));
 
   const candidateUris = candidateOccs.map(c => c[0]);
 
-  // Step 5: Fetch occupation metadata (name, ISCO code)
-  const { data: occupations, error: occError } = await supabase
-    .from('esco_occupations')
-    .select('concept_uri, preferred_label, code, description')
-    .in('concept_uri', candidateUris);
-
-  if (occError || !occupations) {
-    throw new Error(`Failed to query esco_occupations: ${occError?.message}`);
+  if (candidateUris.length === 0) {
+    return {
+      totalNormalizedSkillsSupplied: normalizedSkills.length,
+      mappedSkillCount: mappedSkills.length,
+      unmappedSkillCount: unmappedSkills.length,
+      mappedSkills,
+      unmappedSkills,
+      totalOccupationsMatched: 0,
+      topOccupations: []
+    };
   }
 
-  const occMetaMap = new Map(occupations.map(o => [o.concept_uri, o]));
+  // Step 5: Fetch occupation metadata (name, ISCO code)
+  const occRes = await pool.query(
+    `SELECT concept_uri, preferred_label, code, description FROM esco_occupations WHERE concept_uri = ANY($1)`,
+    [candidateUris]
+  );
+  const occMetaMap = new Map(occRes.rows.map(o => [o.concept_uri, o]));
 
-  // Step 6: Query total skill count for each candidate occupation to compute coverageScore
+  // Step 6: Query total skill count for candidate occupations in a single grouped query
+  const countsRes = await pool.query(
+    `SELECT occupation_uri, count(*) as count FROM esco_occupation_skills WHERE occupation_uri = ANY($1) GROUP BY occupation_uri`,
+    [candidateUris]
+  );
+  const occTotalSkillsMap = new Map<string, number>(
+    countsRes.rows.map(r => [r.occupation_uri, parseInt(r.count, 10)])
+  );
+
   const rankedOccupations: MatchedOccupation[] = [];
 
   for (const [occUri, matchedSkillSet] of candidateOccs) {
     const meta = occMetaMap.get(occUri);
     if (!meta) continue;
 
-    // Count total skills associated with this occupation in ESCO
-    const { count: totalSkillsCount } = await supabase
-      .from('esco_occupation_skill_relations')
-      .select('*', { count: 'exact', head: true })
-      .eq('occupation_uri', occUri);
-
-    const totalRelevant = totalSkillsCount || matchedSkillSet.size;
+    const totalRelevant = occTotalSkillsMap.get(occUri) || matchedSkillSet.size;
     const matchedCount = matchedSkillSet.size;
     const coverageScore = Number((matchedCount / totalRelevant).toFixed(4));
 
@@ -211,8 +226,8 @@ export async function matchSkillsToEscoOccupations(
       matchedSkills: Array.from(matchedSkillSet),
       totalRelevantSkills: totalRelevant,
       coverageScore,
-      essentialMatchedCount: "N/A (no relation_type in schema)",
-      optionalMatchedCount: "N/A (no relation_type in schema)"
+      essentialMatchedCount: occupationEssentialMap.get(occUri)?.size || 0,
+      optionalMatchedCount: occupationOptionalMap.get(occUri)?.size || 0
     });
   }
 

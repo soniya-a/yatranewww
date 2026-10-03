@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { useEffect, useState, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { ArrowLeft, Mic, MicOff, Clock, Send, Loader2, Award, ClipboardCheck, Sparkles, Check, CheckCircle, ChevronRight, BookOpen, AlertCircle, Sun, Volume2, ZoomIn, ZoomOut, Smartphone, Layers } from 'lucide-react';
+import { ArrowLeft, Mic, MicOff, Clock, Send, Loader2, Award, ClipboardCheck, Sparkles, Check, CheckCircle, ChevronRight, BookOpen, AlertCircle, Sun, Volume2, ZoomIn, ZoomOut, Smartphone, Layers, Brain, Tag, FileText, Briefcase, TrendingUp, GitBranch } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { auth, db } from '../lib/firebase';
 import { collection, addDoc } from 'firebase/firestore';
@@ -637,33 +637,154 @@ export default function Interview() {
   const navigate = useNavigate();
   const location = useLocation();
   const state = location.state || {};
-  const companyData = state.companyData || "- Company: Niya AI\n- Role: Software Engineer\n- Focus: System Design";
-  const candidateSkills = state.candidateSkills || "React, TypeScript, Python, SQL";
 
-  // Parse company and role from metadata context into reactive states
-  const [targetCompany, setTargetCompany] = useState(() => {
+  // Retrieve rich candidate profile & job context passed from Home.tsx
+  const storedContext = (() => {
     try {
-      const comLine = companyData.split('\n').find(l => l.includes('- Company:'));
-      return comLine ? comLine.replace('- Company:', '').trim() : "Niya AI";
+      const item = typeof window !== 'undefined' ? sessionStorage.getItem('yatranew_active_interview_context') : null;
+      return item ? JSON.parse(item) : null;
     } catch (e) {
-      return "Niya AI";
+      return null;
+    }
+  })();
+
+  // Explicit interview mode: strictly "STANDARD" | "VR" (Never default silently to VR!)
+  const requestedMode: "STANDARD" | "VR" = (() => {
+    if (state.mode === "VR" || state.isVR === true) return "VR";
+    if (state.mode === "STANDARD" || state.isVR === false) return "STANDARD";
+    if (storedContext?.mode === "VR" || storedContext?.isVR === true) return "VR";
+    if (storedContext?.mode === "STANDARD" || storedContext?.isVR === false) return "STANDARD";
+    return "STANDARD";
+  })();
+
+  // Direct URL Protection (PART 10):
+  // If user opens /interview directly without state, storedContext, or an active session, redirect to setup
+  useEffect(() => {
+    const hasState = Boolean(location.state && (location.state.targetRole || location.state.candidateProfile || location.state.mode));
+    const hasStoredContext = Boolean(typeof window !== 'undefined' && sessionStorage.getItem('yatranew_active_interview_context'));
+    const hasStoredSession = Boolean(typeof window !== 'undefined' && sessionStorage.getItem('yatranew_active_session_id'));
+
+    if (!hasState && !hasStoredContext && !hasStoredSession) {
+      console.warn("[Interview Protection] No active interview session or context found. Redirecting to selection.");
+      navigate('/', { replace: true });
+    }
+  }, [navigate, location.state]);
+
+  // Resolve candidate profile and target job context cleanly from route state or session storage
+  const profileSource = location.state?.candidateProfile || storedContext?.candidateProfile;
+  const initialRole = 
+    location.state?.targetRole ||
+    location.state?.selectedJob?.title ||
+    storedContext?.targetRole ||
+    storedContext?.selectedJob?.title ||
+    storedContext?.jobContext?.jobTitle ||
+    (profileSource?.targetRoles?.[0]) ||
+    "Accounts Assistant";
+
+  const initialCompany = 
+    location.state?.targetCompany ||
+    location.state?.selectedJob?.company ||
+    storedContext?.targetCompany ||
+    storedContext?.selectedJob?.company ||
+    storedContext?.jobContext?.company ||
+    "Subek Agarwal & Associates";
+
+  const [targetCompany, setTargetCompany] = useState<string>(initialCompany);
+  const [targetRole, setTargetRole] = useState<string>(initialRole);
+
+  const candDomainCheck = (profileSource?.domain || "").toLowerCase();
+  const candRoleCheck = (initialRole || "").toLowerCase();
+  const isCommerceCandidate = 
+    candDomainCheck.includes("commerce") ||
+    candDomainCheck.includes("account") ||
+    candRoleCheck.includes("account") ||
+    candRoleCheck.includes("commerce") ||
+    candRoleCheck.includes("finance");
+
+  const resolvedCandidateProfile = profileSource ? {
+    ...profileSource,
+    name: profileSource.fullName || profileSource.name || "Candidate",
+    domain: isCommerceCandidate ? "commerce" : (profileSource.domain || "general"),
+    discipline: isCommerceCandidate ? "Commerce" : (profileSource.discipline || "Engineering"),
+    skills: Array.isArray(profileSource.skills) && profileSource.skills.length > 0
+      ? profileSource.skills
+      : (isCommerceCandidate ? ["Tally", "Cost and Management Accounting", "English shorthand", "English typing", "Basic Computer Knowledge"] : ["Core Technical", "Problem Solving"])
+  } : {
+    name: auth.currentUser?.displayName || localStorage.getItem("userName") || "Candidate",
+    discipline: isCommerceCandidate ? "Commerce" : "Engineering",
+    domain: isCommerceCandidate ? "commerce" : "general",
+    skills: isCommerceCandidate 
+      ? ["Tally", "Cost and Management Accounting", "English shorthand", "English typing", "Basic Computer Knowledge"] 
+      : ["Problem Solving", "Engineering Fundamentals"],
+    targetRoles: [targetRole],
+    projects: [],
+    achievements: [],
+    experience: [],
+    education: []
+  };
+
+  const candidateSkills = 
+    (Array.isArray(resolvedCandidateProfile.skills) ? resolvedCandidateProfile.skills.join(', ') : "") ||
+    location.state?.candidateSkills ||
+    (isCommerceCandidate ? "Tally, Cost and Management Accounting, English shorthand, English typing" : "Problem Solving, Core Fundamentals");
+
+  const companyData = `- Company: ${targetCompany}\n- Role: ${targetRole}\n- Domain: ${resolvedCandidateProfile.domain}`;
+
+  const resolvedJobContext = storedContext?.jobContext || {
+    jobTitle: targetRole,
+    company: targetCompany,
+    jobDescription: location.state?.selectedJob?.description || storedContext?.selectedJob?.description || "",
+    requiredSkills: candidateSkills.split(',').map((s: string) => s.trim()).filter(Boolean),
+    matchedSkills: candidateSkills.split(',').map((s: string) => s.trim()).filter(Boolean),
+    missingSkills: []
+  };
+
+  // Adaptive server session state
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(() => {
+    try {
+      return typeof window !== 'undefined' ? sessionStorage.getItem('yatranew_active_session_id') : null;
+    } catch (e) {
+      return null;
     }
   });
+  const [currentAdaptiveQuestion, setCurrentAdaptiveQuestion] = useState<any>(null);
+  const [lastEvaluation, setLastEvaluation] = useState<any>(null);
+  const [sessionSource, setSessionSource] = useState<'AI_GENERATED' | 'FALLBACK_BANK'>('AI_GENERATED');
+  const [isSessionComplete, setIsSessionComplete] = useState<boolean>(false);
 
-  const [targetRole, setTargetRole] = useState(() => {
-    try {
-      const roleLine = companyData.split('\n').find(l => l.includes('- Role:'));
-      return roleLine ? roleLine.replace('- Role:', '').trim() : "Software Engineer";
-    } catch (e) {
-      return "Software Engineer";
-    }
-  });
-
-  // Determine active company configuration mode on boot
+  // Determine active company configuration mode on boot (dynamic fallback matching target company)
   const [currentMode, setCurrentMode] = useState(() => {
-    const comp = (targetCompany || "Niya AI").toLowerCase();
+    const comp = (targetCompany || "").toLowerCase();
     const found = INTERVIEW_MODES.find(m => comp.includes(m.id) || m.company.toLowerCase().includes(comp));
-    return found || INTERVIEW_MODES[0];
+    if (found) {
+      return {
+        ...found,
+        role: targetRole || found.role
+      };
+    }
+    return {
+      id: "custom",
+      company: targetCompany,
+      role: targetRole,
+      theme: {
+        primaryColor: "#0284c7",
+        brandColors: ["#0284c7", "#0369a1", "#075985", "#0c4a6e"],
+        accentGlow: "rgba(2, 132, 199, 0.25)",
+        boardroomStyle: "Corporate Executive Suite",
+        skyColor: "#e0f2fe",
+        lightColor: "#f8fafc",
+        lightIntensity: 1.2,
+        daylightName: "Executive Daylight",
+        officeMurmurPitch: 1.0,
+        wallTextureColor: "#f8fafc",
+        floorColor: "#e2e8f0",
+        deskColor: "#0f172a"
+      },
+      mentorTip: `Demonstrate structured accuracy and domain confidence in ${targetRole} principles.`,
+      pastScore: 75,
+      pastFocus: targetRole,
+      welcomeMemory: `Welcome to your interview for ${targetRole} at ${targetCompany}.`
+    };
   });
 
   // Daylight options: morning, noon, sunset, night
@@ -684,9 +805,17 @@ export default function Interview() {
 
   const [mentorAdvice, setMentorAdvice] = useState("Excellent posture! Documenting key performance vectors on screen.");
   const [recapMessage, setRecapMessage] = useState("");
-  const [isVRActive, setIsVRActive] = useState(() => typeof window !== 'undefined' && !!(window as any).AFRAME);
+  
+  // Bug 2 Fix: isVRActive must initialize strictly from requestedMode, NOT window.AFRAME existence!
+  const [isVRActive, setIsVRActive] = useState<boolean>(() => requestedMode === "VR");
 
   useEffect(() => {
+    // STANDARD Mode must NEVER activate or register VR
+    if (requestedMode !== "VR") {
+      setIsVRActive(false);
+      return;
+    }
+
     const checkVR = () => {
       if (typeof window !== 'undefined' && (window as any).AFRAME) {
         setIsVRActive(true);
@@ -712,7 +841,7 @@ export default function Interview() {
       }, 500);
       return () => clearInterval(interval);
     }
-  }, []);
+  }, [requestedMode]);
 
   // Adaptive user performance/score memory logic
   useEffect(() => {
@@ -932,6 +1061,8 @@ export default function Interview() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [aiSpeech, setAiSpeech] = useState("Establishing secure audio connection with our interviewer avatar...");
   const [inputText, setInputText] = useState("");
+  const [submissionError, setSubmissionError] = useState<{ message: string; answer: string; questionId?: string } | null>(null);
+  const isSubmittingRef = useRef<boolean>(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   
   // Unified chronological log of interview transcripts
@@ -1100,95 +1231,183 @@ export default function Interview() {
   const [pendingFollowUp, setPendingFollowUp] = useState<string | null>(null);
   const [askedFollowUp, setAskedFollowUp] = useState(false);
 
-  // Fetch or compile questions for a specific round index with optional parameters overrides
-  const fetchRoundQuestions = async (roundIdx: number, overrideCompany?: string, overrideRole?: string) => {
+  // Adaptive Interview Session Manager (Real-time dynamic adaptive question generation & recovery)
+  const initAdaptiveSession = async () => {
     setLoadingQuestions(true);
-    const activeRound = ROUNDS[roundIdx];
-    const compToUse = overrideCompany || targetCompany;
-    const roleToUse = overrideRole || targetRole;
-    
-    // Clear keyboard input states
     setInputText("");
-    
+
     try {
       const token = (auth.currentUser ? await auth.currentUser.getIdToken() : null) || (() => {
         const payload = { user_id: "guest-user-123" };
-        const payloadB64 = btoa(JSON.stringify(payload))
-          .replace(/=/g, "")
-          .replace(/\+/g, "-")
-          .replace(/\//g, "_");
+        const payloadB64 = btoa(JSON.stringify(payload)).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
         return `header.${payloadB64}.signature`;
       })();
- 
-      const res = await fetch('/api/interview/generate-questions', {
+
+      // Check if we can recover an active session on browser refresh
+      const existingSessionId = typeof window !== 'undefined' ? sessionStorage.getItem('yatranew_active_session_id') : null;
+      if (existingSessionId) {
+        try {
+          const recRes = await fetch(`/api/interview/session/${existingSessionId}`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          });
+          if (recRes.ok) {
+            const recData = await recRes.json();
+            const session = recData.session;
+            if (session && session.currentQuestion) {
+              setActiveSessionId(session.id || session.sessionId);
+              if (session.mode === "VR") {
+                setIsVRActive(true);
+              } else if (session.mode === "STANDARD") {
+                setIsVRActive(false);
+              }
+              setCurrentAdaptiveQuestion(session.currentQuestion);
+              setSessionSource(session.currentQuestion.source);
+              setQuestions(session.questions);
+              setCurrentQuestionIndex(session.questions.length - 1);
+              if (session.evaluations?.length > 0) {
+                setLastEvaluation(session.evaluations[session.evaluations.length - 1]);
+              }
+              setAiSpeech(session.currentQuestion.question);
+              
+              // Reconstruct chat history
+              const recoveredChat: {role: string, text: string}[] = [];
+              session.questions.forEach((q: any) => {
+                recoveredChat.push({ role: 'ai', text: `[${q.category} - Q${q.sequenceNumber}] ${q.question}` });
+                const ans = session.answers?.find((a: any) => a.questionId === q.id);
+                if (ans) {
+                  recoveredChat.push({ role: 'user', text: ans.answer });
+                  const ev = session.evaluations?.find((e: any) => e.questionId === q.id);
+                  if (ev?.improvementFeedback) {
+                    recoveredChat.push({ role: 'ai', text: `[Feedback] ${ev.improvementFeedback}` });
+                  }
+                }
+              });
+              setChatHistory(recoveredChat);
+              setLoadingQuestions(false);
+              return;
+            }
+          }
+        } catch (e) {
+          console.warn("Could not restore session from storage, starting new one:", e);
+        }
+      }
+
+      // Start fresh real adaptive interview session with full candidate profile + job description context
+      const res = await fetch('/api/interview/session/start', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({
-          roundType: activeRound.key,
-          role: roleToUse,
-          company: compToUse,
-          candidateSkills: candidateSkills
+          candidateProfile: resolvedCandidateProfile,
+          candidateProfileId: resolvedCandidateProfile?.id,
+          jobContext: resolvedJobContext,
+          category: ROUNDS[0].label,
+          difficulty: "Entry",
+          mode: requestedMode,
+          targetRole: targetRole,
+          targetCompany: targetCompany,
+          jobId: storedContext?.selectedJob?.id || "job-1"
         })
       });
- 
+
       if (!res.ok) {
-        throw new Error("HTTP error: " + res.status);
+        throw new Error("Adaptive session start HTTP error: " + res.status);
       }
- 
+
       const data = await res.json();
-      const loadedQuestions = Array.isArray(data) ? data : (data.questions || []);
-      setQuestions(loadedQuestions);
-      setCurrentQuestionIndex(0);
- 
-      // Trigger first question spoken by avatar (only of seated or subsequent rounds)
-      if (loadedQuestions.length > 0) {
-        const firstQ = loadedQuestions[0];
-        setAiSpeech(firstQ.question);
-        
-        // Skip calling speech synthesize if they are still performing entrance walk-in
-        if (entranceState === 'seated' || roundIdx > 0) {
-          // Speak question out loud
-          speakText(firstQ.question);
- 
-          // Append to master transcript history
+      if (data.sessionId && data.currentQuestion) {
+        setActiveSessionId(data.sessionId);
+        sessionStorage.setItem('yatranew_active_session_id', data.sessionId);
+        if (data.mode === "VR") {
+          setIsVRActive(true);
+        } else if (data.mode === "STANDARD") {
+          setIsVRActive(false);
+        }
+        setCurrentAdaptiveQuestion(data.currentQuestion);
+        setSessionSource(data.currentQuestion.source);
+        setQuestions([data.currentQuestion]);
+        setCurrentQuestionIndex(0);
+        setAiSpeech(data.currentQuestion.question);
+
+        if (entranceState === 'seated') {
+          speakText(data.currentQuestion.question);
           setChatHistory(prev => [
             ...prev,
-            { role: 'ai', text: `[${activeRound.label} - Q1] ${firstQ.question}` }
+            { role: 'ai', text: `[${data.currentQuestion.category} - Q1] ${data.currentQuestion.question}` }
           ]);
         }
       }
     } catch (err) {
-      console.warn("Could not fetch remote questions, calling fallback offline assets:", err instanceof Error ? err.message : String(err));
-      // Fallback local mock questions matching same 8 per round schema
-      const offlineQuestions = getFallbackLocalQuestions(activeRound.key, roleToUse, compToUse, candidateSkills);
-      setQuestions(offlineQuestions);
+      console.warn("Adaptive session initiation fallback triggered:", err instanceof Error ? err.message : String(err));
+      setSessionSource('FALLBACK_BANK');
+      // Explicitly tagged offline fallback
+      const offlineQuestions = getFallbackLocalQuestions(ROUNDS[0].key, targetRole, targetCompany, candidateSkills);
+      const taggedQuestions = offlineQuestions.map((q, idx) => ({
+        ...q,
+        id: `fallback-${idx + 1}`,
+        source: 'FALLBACK_BANK',
+        category: 'Core Technical',
+        difficulty: 'Entry',
+        sequenceNumber: idx + 1,
+        skillsTested: candidateSkills.split(',').map((s: string) => s.trim())
+      }));
+      setQuestions(taggedQuestions);
       setCurrentQuestionIndex(0);
- 
-      if (offlineQuestions.length > 0) {
-        const firstQ = offlineQuestions[0];
-        setAiSpeech(firstQ.question);
-        
-        if (entranceState === 'seated' || roundIdx > 0) {
-          speakText(firstQ.question);
- 
-          setChatHistory(prev => [
-            ...prev,
-            { role: 'ai', text: `[${activeRound.label} - Q1] ${firstQ.question}` }
-          ]);
-        }
+      if (taggedQuestions.length > 0) {
+        setAiSpeech(taggedQuestions[0].question);
+        setCurrentAdaptiveQuestion(taggedQuestions[0]);
       }
     } finally {
       setLoadingQuestions(false);
     }
   };
- 
-  // Run initial fetch for Self-Introduction round
+
+  // Run initial adaptive session start on mount
   useEffect(() => {
-    fetchRoundQuestions(0);
+    initAdaptiveSession();
   }, []);
+
+  const fetchRoundQuestions = async (roundIdx: number) => {
+    setLoadingQuestions(true);
+    const activeRound = ROUNDS[roundIdx];
+    try {
+      if (activeSessionId) {
+        // Can request new question for round category
+        const token = (auth.currentUser ? await auth.currentUser.getIdToken() : null) || (() => {
+          const payload = { user_id: "guest-user-123" };
+          const payloadB64 = btoa(JSON.stringify(payload)).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+          return `header.${payloadB64}.signature`;
+        })();
+        const res = await fetch('/api/interview/generate-questions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          body: JSON.stringify({
+            roundType: activeRound.key,
+            role: targetRole,
+            company: targetCompany,
+            candidateSkills: candidateSkills
+          })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const loaded = Array.isArray(data) ? data : (data.questions || []);
+          setQuestions(loaded);
+          setCurrentQuestionIndex(0);
+          if (loaded.length > 0) {
+            setAiSpeech(loaded[0].question);
+            speakText(loaded[0].question);
+          }
+          return;
+        }
+      }
+    } catch (e) {
+      console.warn("Could not fetch round questions:", e);
+    } finally {
+      setLoadingQuestions(false);
+    }
+  };
 
   // Entrance Sequence Orchestration Timers
   const startEntranceSequence = () => {
@@ -1292,7 +1511,12 @@ export default function Interview() {
   // Record active user message, advance question, or finish round
   const handleUserMessage = async (message: string) => {
     const trimmedMessage = message.trim();
-    if (!trimmedMessage || loadingQuestions || isEvaluatingAnswer) return;
+    if (!trimmedMessage || loadingQuestions || isEvaluatingAnswer || isSubmittingRef.current) {
+      return;
+    }
+
+    isSubmittingRef.current = true;
+    setIsEvaluatingAnswer(true);
 
     // Immediately stop avatar speaking
     if ('speechSynthesis' in window) {
@@ -1300,12 +1524,12 @@ export default function Interview() {
       setIsSpeaking(false);
     }
 
-    // Save active reply
+    // Save active reply locally
     const answerKey = `${currentRoundIndex}_${currentQuestionIndex}${askedFollowUp ? '_followup' : ''}`;
     setAnswers(prev => ({ ...prev, [answerKey]: trimmedMessage }));
 
     // Append answer log to transcript
-    const activeQ = questions[currentQuestionIndex];
+    const activeQ = currentAdaptiveQuestion || questions[currentQuestionIndex];
     setChatHistory(prev => [
       ...prev,
       { role: 'user', text: trimmedMessage }
@@ -1330,12 +1554,125 @@ export default function Interview() {
       };
     });
 
-    if (trimmedMessage === "[Candidate skipped or requested next question]" || currentQuestionIndex >= 8) {
-       advanceToNextQuestion();
-       return;
+    // Adaptive Server Session Answer Flow
+    if (activeSessionId) {
+      try {
+        const token = (auth.currentUser ? await auth.currentUser.getIdToken() : null) || (() => {
+          const payload = { user_id: "guest-user-123" };
+          const payloadB64 = btoa(JSON.stringify(payload)).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+          return `header.${payloadB64}.signature`;
+        })();
+
+        const questionIdToSend = activeQ?.id || `q_${currentQuestionIndex + 1}`;
+        const res = await fetch('/api/interview/session/answer', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          body: JSON.stringify({
+            sessionId: activeSessionId,
+            questionId: questionIdToSend,
+            answer: trimmedMessage,
+            durationSeconds: Math.max(5, secondsWaiting)
+          })
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          const evalRes = data.evaluation;
+          setLastEvaluation(evalRes);
+          setSubmissionError(null);
+          
+          if (evalRes) {
+            setMetrics(prev => ({
+              ...prev,
+              technical: Math.round(evalRes.score * 10),
+              communication: Math.round(evalRes.clarity === "Clear and Structured" ? 90 : 75),
+              confidence: Math.round(evalRes.score >= 7 ? 88 : 72),
+              speakingSpeed: computedSpeed,
+              fillerCount: prev.fillerCount + (hasFillers ? 1 : 0)
+            }));
+
+            const isQuota = Boolean(evalRes.isQuotaExceeded);
+            const isOffline = evalRes.source === "OFFLINE_EVALUATION" || evalRes.evaluationMode === "OFFLINE";
+
+            if (isQuota) {
+              setChatHistory(prev => [
+                ...prev,
+                { 
+                  role: 'ai', 
+                  text: `[Offline Evaluation - AI Quota Limit]\nNotice: AI evaluation temporarily unavailable due to API quota.\nRubric Score: ${evalRes.score}/10 (${evalRes.verdict})\nStrengths: ${evalRes.strengths?.join(", ") || "Recorded"}\nSuggestions: ${evalRes.improvementFeedback}`
+                }
+              ]);
+              updateMentorAdvice(`AI evaluation temporarily unavailable due to API quota. Recorded via offline rubric (Score: ${evalRes.score}/10).`);
+            } else if (isOffline) {
+              setChatHistory(prev => [
+                ...prev,
+                { 
+                  role: 'ai', 
+                  text: `[Offline Evaluation]\nRubric Score: ${evalRes.score}/10 (${evalRes.verdict})\nStrengths: ${evalRes.strengths?.join(", ") || "Recorded"}\nSuggestions: ${evalRes.improvementFeedback}`
+                }
+              ]);
+              updateMentorAdvice(`Offline evaluation score: ${evalRes.score}/10 (${evalRes.verdict}).`);
+            } else {
+              setChatHistory(prev => [
+                ...prev,
+                { 
+                  role: 'ai', 
+                  text: `[AI Evaluation - Gemini]\nScore: ${evalRes.score}/10 (${evalRes.verdict})\nStrengths: ${evalRes.strengths?.join(", ") || "Good attempt"}\nMissing: ${evalRes.missingConcepts?.join(", ") || "None"}\nGuidance: ${evalRes.improvementFeedback}`
+                }
+              ]);
+              updateMentorAdvice(`Naya Score: ${evalRes.score}/10. ${evalRes.strengths?.[0] ? `Strength: ${evalRes.strengths[0]}.` : ''} ${evalRes.missingConcepts?.[0] ? `Missing: ${evalRes.missingConcepts[0]}.` : ''}`);
+            }
+          }
+
+          if (data.isComplete) {
+            await handleCompleteAdaptiveSession(activeSessionId);
+            setIsEvaluatingAnswer(false);
+            isSubmittingRef.current = false;
+            return;
+          }
+
+          if (data.nextQuestion) {
+            const nextQ = data.nextQuestion;
+            setCurrentAdaptiveQuestion(nextQ);
+            setSessionSource(nextQ.source);
+            setQuestions(prev => [...prev, nextQ]);
+            setCurrentQuestionIndex(prev => prev + 1);
+
+            const spokenPrefix = evalRes?.interviewerSpokenFeedback || "Let's proceed to the next question.";
+            const speechText = `${spokenPrefix} ${nextQ.question}`;
+            
+            setAiSpeech(speechText);
+            speakText(speechText);
+            
+            setChatHistory(prev => [
+              ...prev,
+              { role: 'ai', text: `[${nextQ.category} - Q${nextQ.sequenceNumber}] ${nextQ.question}` }
+            ]);
+
+            setIsEvaluatingAnswer(false);
+            isSubmittingRef.current = false;
+            return;
+          }
+        } else {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error || `Server responded with status ${res.status}`);
+        }
+      } catch (err: any) {
+        console.warn("[Interview Submission Error]", err);
+        // Preserve user's answer so it is never lost!
+        setInputText(trimmedMessage);
+        setSubmissionError({
+          message: "AI evaluation service temporarily unreachable. Your answer has been preserved.",
+          answer: trimmedMessage,
+          questionId: activeQ?.id
+        });
+        setIsEvaluatingAnswer(false);
+        isSubmittingRef.current = false;
+        return;
+      }
     }
 
-    setIsEvaluatingAnswer(true);
+    // Fallback Legacy Round Scorer (Only if no active adaptive session is present)
     let speechPrefix = "";
     
     try {
@@ -1345,22 +1682,36 @@ export default function Interview() {
         return `header.${payloadB64}.signature`;
       })();
 
-      const qText = pendingFollowUp || activeQ.question;
+      const qText = pendingFollowUp || activeQ?.question || "Question";
       const res = await fetch('/api/interview/answer/score', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({
           company: targetCompany,
           role: targetRole,
-          round: ROUNDS[currentRoundIndex].label,
+          round: ROUNDS[currentRoundIndex]?.label || "Technical",
           question: qText,
           answer: trimmedMessage
         })
       });
       const data = await res.json();
       
-      let combinedSpeech = data.interviewer_would_say || "Got it.";
-      updateMentorAdvice(`NAYA SCORE: ${data.score}/${data.max_score} (${data.verdict}). ${data.ideal_answer_in_one_line || ""}`);
+      const isQuota = Boolean(data.quota_exceeded);
+      let combinedSpeech = data.interviewer_would_say || "Understood.";
+      
+      if (isQuota) {
+        updateMentorAdvice("AI evaluation temporarily unavailable due to API quota.");
+        setChatHistory(prev => [
+          ...prev,
+          { role: 'ai', text: `[Offline Evaluation - AI Quota Limit] Notice: AI evaluation temporarily unavailable due to API quota. Rubric score: ${data.score}/${data.max_score || 10}.` }
+        ]);
+      } else {
+        updateMentorAdvice(`NAYA SCORE: ${data.score}/${data.max_score} (${data.verdict}). ${data.ideal_answer_in_one_line || ""}`);
+        setChatHistory(prev => [
+          ...prev,
+          { role: 'ai', text: `[${ROUNDS[currentRoundIndex]?.label || "Interview"} - Feedback] ${data.interviewer_would_say}` }
+        ]);
+      }
       
       if (data.ask_follow_up && !askedFollowUp && data.follow_up_question) {
          combinedSpeech += " " + data.follow_up_question;
@@ -1369,29 +1720,120 @@ export default function Interview() {
          
          setChatHistory(prev => [
            ...prev,
-           { role: 'ai', text: `[${ROUNDS[currentRoundIndex].label} - Follow-up] ${combinedSpeech}` }
+           { role: 'ai', text: `[${ROUNDS[currentRoundIndex]?.label || "Interview"} - Follow-up] ${combinedSpeech}` }
          ]);
          setAiSpeech(combinedSpeech);
          speakText(combinedSpeech);
          setIsEvaluatingAnswer(false);
+         isSubmittingRef.current = false;
          return; // Intercept: don't advance to next question
       } else {
-         // Reset follow up states
          setPendingFollowUp(null);
          setAskedFollowUp(false);
-         
-         setChatHistory(prev => [
-           ...prev,
-           { role: 'ai', text: `[${ROUNDS[currentRoundIndex].label} - Feedback] ${data.interviewer_would_say}` }
-         ]);
-         speechPrefix = data.interviewer_would_say + " ";
+         speechPrefix = combinedSpeech + " ";
       }
     } catch (e) {
       console.warn("Could not score answer", e);
+      setInputText(trimmedMessage);
+      setSubmissionError({
+        message: "Evaluation service temporarily unreachable. Your answer has been preserved.",
+        answer: trimmedMessage
+      });
     }
 
     // After scoring, advance to question or next round
     advanceToNextQuestion(speechPrefix);
+    isSubmittingRef.current = false;
+  };
+
+  const handleCompleteAdaptiveSession = async (sessionId: string) => {
+    setIsGrading(true);
+    setGradeResult(null);
+    setSaveSuccess(false);
+
+    const uid = auth.currentUser?.uid || localStorage.getItem("guest_uid") || "guest-user-123";
+    try {
+      const token = (auth.currentUser ? await auth.currentUser.getIdToken() : null) || (() => {
+        const payload = { user_id: uid };
+        const payloadB64 = btoa(JSON.stringify(payload)).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+        return `header.${payloadB64}.signature`;
+      })();
+
+      const res = await fetch('/api/interview/session/complete', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ sessionId })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const rep = data.report || data.finalReport;
+        if (rep) {
+          const overallScore = rep.overall_score || rep.overallScore || 75;
+          const mappedReport = {
+            overall_score: overallScore,
+            overall_grade: rep.overall_grade || (overallScore >= 85 ? "A" : overallScore >= 70 ? "B+" : overallScore >= 55 ? "B" : "C"),
+            hiring_decision: rep.hiring_decision || (rep.recommendation || "HIRE").replace(/_/g, ' '),
+            percentile_estimate: rep.percentile_estimate || (overallScore >= 85 ? "Top 10%" : overallScore >= 70 ? "Top 25%" : "Top 50%"),
+            naya_personal_message: rep.summary || rep.summaryFeedback || "Interview completed with solid domain fundamentals.",
+            technical_accuracy: rep.technical_accuracy || `${((rep.technicalScore || (overallScore * 0.1)) / 1).toFixed(1)} / 10`,
+            communication_quality: rep.communication_quality || `${((rep.communicationScore || (overallScore * 0.1)) / 1).toFixed(1)} / 10`,
+            confidence_level: rep.confidence_level || `${((rep.problemSolvingScore || (overallScore * 0.1)) / 1).toFixed(1)} / 10`,
+            top_3_strengths: rep.top_3_strengths || rep.strengths?.slice(0, 3) || ["Practical domain awareness", "Domain relevance"],
+            top_3_weak_areas: rep.top_3_weak_areas || rep.weaknesses?.slice(0, 3) || ["Need deeper operational details", "Could quantify trade-offs"],
+            personalized_improvement_plan: (rep.personalized_improvement_plan || rep.missingConceptsSummary || []).map((c: any) => typeof c === 'string' ? ({
+              area: c,
+              problem_observed: `Concept '${c}' was missing or incomplete in candidate answers.`,
+              how_to_fix: `Review ${c} principles and prepare practical case examples.`,
+              resource: "Yatranew AI Practice Suite",
+              timeline: "1-2 weeks"
+            }) : c)
+          };
+
+          setGradeResult(mappedReport);
+          setIsSessionComplete(true);
+          setCurrentQuestionIndex(8);
+
+          const payload = {
+            userId: uid,
+            sessionId: sessionId,
+            role: targetRole,
+            company: targetCompany,
+            createdAt: Date.now(),
+            score: rep.overallScore,
+            feedback: rep.summaryFeedback,
+            strengths: rep.strengths,
+            weaknesses: rep.weaknesses,
+            transcript: chatHistory,
+            hiring_decision: mappedReport.hiring_decision,
+            percentile_estimate: mappedReport.percentile_estimate
+          };
+
+          try {
+            if (auth.currentUser && !localStorage.getItem("guest_session")) {
+              await addDoc(collection(db, "interviews"), payload);
+            } else {
+              throw new Error("Guest session");
+            }
+            setSaveSuccess(true);
+          } catch (e) {
+            const cached = localStorage.getItem(`interviews_${uid}`);
+            const currentList = cached ? JSON.parse(cached) : [];
+            const savedItem = { id: `local-interview-${Date.now()}`, ...payload };
+            localStorage.setItem(`interviews_${uid}`, JSON.stringify([savedItem, ...currentList]));
+            setSaveSuccess(true);
+          }
+          return;
+        }
+      }
+    } catch (err) {
+      console.warn("Could not retrieve session final report:", err);
+    } finally {
+      setIsGrading(false);
+    }
   };
 
   const advanceToNextQuestion = (speechPrefix: string = "") => {
@@ -1509,6 +1951,11 @@ export default function Interview() {
 
   // Aggregate transcripts and evaluate using Gemini grading API
   const handleGenerateEvaluationReport = async () => {
+    if (activeSessionId) {
+      await handleCompleteAdaptiveSession(activeSessionId);
+      return;
+    }
+
     if (chatHistory.length === 0) {
       alert("Please participate in the interview rounds first to build up your transcripts!");
       return;
@@ -1677,7 +2124,7 @@ export default function Interview() {
     <div className="relative w-full h-screen bg-transparent text-white overflow-hidden select-none">
       <div id="vr-ui-overlay" className="absolute inset-0 pointer-events-none z-10">
       
-      {entranceState === 'unstarted' && (
+      {entranceState === 'unstarted' && isVRActive && (
         <div className="absolute inset-0 bg-[#09090b]/98 z-50 flex items-center justify-center p-6 text-white overflow-hidden pointer-events-auto">
           {/* Background patterns */}
           <div className="absolute -top-40 -right-40 w-96 h-96 rounded-full bg-cyan-500/10 blur-[120px]" />
@@ -1746,6 +2193,13 @@ export default function Interview() {
           <span className="px-3.5 py-2.5 rounded-xl bg-zinc-900/80 border border-zinc-800 backdrop-blur-md text-zinc-200 font-mono text-[10px] font-bold uppercase tracking-widest leading-none shadow-sm">
             {targetCompany} • {targetRole}
           </span>
+          <span className={`px-3 py-2.5 rounded-xl border backdrop-blur-md font-mono text-[10px] font-bold uppercase tracking-widest leading-none flex items-center gap-1.5 shadow-sm ${
+            isVRActive 
+              ? 'bg-purple-950/80 border-purple-700 text-purple-300' 
+              : 'bg-blue-950/80 border-blue-700 text-blue-300'
+          }`}>
+            {isVRActive ? 'VR 3D SIMULATION' : 'STANDARD AI INTERVIEW'}
+          </span>
           <span className="px-3.5 py-2.5 rounded-xl bg-cyan-950/80 border border-cyan-800 backdrop-blur-md text-cyan-400 font-mono text-[10px] font-bold uppercase tracking-widest leading-none flex items-center gap-2 shadow-sm">
             <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
             {ROUNDS[currentRoundIndex].label}
@@ -1783,45 +2237,47 @@ export default function Interview() {
             Assess & View Report
           </button>
           
-          <div className="relative pointer-events-auto">
-            <button
-              onClick={() => setIsSettingsOpen(!isSettingsOpen)}
-              className="px-4 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 transition-all flex items-center gap-2 text-[10px] uppercase font-bold tracking-wider text-zinc-300 shadow-sm cursor-pointer"
-            >
-              <Smartphone className="w-4 h-4" />
-              Settings
-            </button>
-            {isSettingsOpen && (
-              <div className="absolute right-0 top-full mt-2 w-72 bg-zinc-900/95 border border-zinc-800 rounded-xl shadow-2xl backdrop-blur-xl p-4 flex flex-col gap-4 text-left z-50">
-                <div>
-                  <span className="text-[9px] uppercase tracking-widest font-black text-cyan-400 font-mono">Environment Controls</span>
-                </div>
-                <div className="space-y-1.5">
-                  <span className="text-[8px] uppercase font-bold text-zinc-400 font-mono">Camera Zoom</span>
-                  <div className="grid grid-cols-3 gap-1.5">
-                    <button onClick={handleZoomIn} className="py-1.5 text-center bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-mono text-[9px] font-bold rounded-lg transition-colors flex justify-center items-center cursor-pointer"><ZoomIn className="w-3.5 h-3.5 mr-1"/> In</button>
-                    <button onClick={handleZoomOut} className="py-1.5 text-center bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-mono text-[9px] font-bold rounded-lg transition-colors flex justify-center items-center cursor-pointer"><ZoomOut className="w-3.5 h-3.5 mr-1"/> Out</button>
-                    <button onClick={handleResetZoom} className="py-1.5 text-center bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-mono text-[9px] font-bold rounded-lg transition-colors cursor-pointer">Reset</button>
+          {isVRActive && (
+            <div className="relative pointer-events-auto">
+              <button
+                onClick={() => setIsSettingsOpen(!isSettingsOpen)}
+                className="px-4 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 transition-all flex items-center gap-2 text-[10px] uppercase font-bold tracking-wider text-zinc-300 shadow-sm cursor-pointer"
+              >
+                <Smartphone className="w-4 h-4" />
+                Settings
+              </button>
+              {isSettingsOpen && (
+                <div className="absolute right-0 top-full mt-2 w-72 bg-zinc-900/95 border border-zinc-800 rounded-xl shadow-2xl backdrop-blur-xl p-4 flex flex-col gap-4 text-left z-50">
+                  <div>
+                    <span className="text-[9px] uppercase tracking-widest font-black text-cyan-400 font-mono">Environment Controls</span>
+                  </div>
+                  <div className="space-y-1.5">
+                    <span className="text-[8px] uppercase font-bold text-zinc-400 font-mono">Camera Zoom</span>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      <button onClick={handleZoomIn} className="py-1.5 text-center bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-mono text-[9px] font-bold rounded-lg transition-colors flex justify-center items-center cursor-pointer"><ZoomIn className="w-3.5 h-3.5 mr-1"/> In</button>
+                      <button onClick={handleZoomOut} className="py-1.5 text-center bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-mono text-[9px] font-bold rounded-lg transition-colors flex justify-center items-center cursor-pointer"><ZoomOut className="w-3.5 h-3.5 mr-1"/> Out</button>
+                      <button onClick={handleResetZoom} className="py-1.5 text-center bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-mono text-[9px] font-bold rounded-lg transition-colors cursor-pointer">Reset</button>
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <span className="text-[8px] uppercase font-bold text-zinc-400 font-mono">Lighting Mode</span>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      <button onClick={() => setDaylightMode('morning')} className={`py-1.5 text-center font-mono text-[9px] font-bold rounded-lg transition-colors cursor-pointer ${daylightMode === 'morning' ? 'bg-amber-400 text-zinc-900' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300'}`}>Morning</button>
+                      <button onClick={() => setDaylightMode('sunset')} className={`py-1.5 text-center font-mono text-[9px] font-bold rounded-lg transition-colors cursor-pointer ${daylightMode === 'sunset' ? 'bg-orange-500 text-zinc-900' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300'}`}>Evening</button>
+                      <button onClick={() => setDaylightMode('night')} className={`py-1.5 text-center font-mono text-[9px] font-bold rounded-lg transition-colors cursor-pointer ${daylightMode === 'night' ? 'bg-indigo-500 text-zinc-900' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300'}`}>Night</button>
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <span className="text-[8px] uppercase font-bold text-zinc-400 font-mono">VR / AR Experience</span>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <button onClick={enterVRMode} className="py-1.5 text-center bg-zinc-800 hover:bg-zinc-700 text-cyan-400 font-mono text-[9px] font-bold rounded-lg transition-colors cursor-pointer">Enter VR</button>
+                      <button onClick={enterARMode} className="py-1.5 text-center bg-zinc-800 hover:bg-zinc-700 text-emerald-400 font-mono text-[9px] font-bold rounded-lg transition-colors cursor-pointer">Enter AR</button>
+                    </div>
                   </div>
                 </div>
-                <div className="space-y-1.5">
-                  <span className="text-[8px] uppercase font-bold text-zinc-400 font-mono">Lighting Mode</span>
-                  <div className="grid grid-cols-3 gap-1.5">
-                    <button onClick={() => setDaylightMode('morning')} className={`py-1.5 text-center font-mono text-[9px] font-bold rounded-lg transition-colors cursor-pointer ${daylightMode === 'morning' ? 'bg-amber-400 text-zinc-900' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300'}`}>Morning</button>
-                    <button onClick={() => setDaylightMode('sunset')} className={`py-1.5 text-center font-mono text-[9px] font-bold rounded-lg transition-colors cursor-pointer ${daylightMode === 'sunset' ? 'bg-orange-500 text-zinc-900' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300'}`}>Evening</button>
-                    <button onClick={() => setDaylightMode('night')} className={`py-1.5 text-center font-mono text-[9px] font-bold rounded-lg transition-colors cursor-pointer ${daylightMode === 'night' ? 'bg-indigo-500 text-zinc-900' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300'}`}>Night</button>
-                  </div>
-                </div>
-                <div className="space-y-1.5">
-                  <span className="text-[8px] uppercase font-bold text-zinc-400 font-mono">VR / AR Experience</span>
-                  <div className="grid grid-cols-2 gap-1.5">
-                    <button onClick={enterVRMode} className="py-1.5 text-center bg-zinc-800 hover:bg-zinc-700 text-cyan-400 font-mono text-[9px] font-bold rounded-lg transition-colors cursor-pointer">Enter VR</button>
-                    <button onClick={enterARMode} className="py-1.5 text-center bg-zinc-800 hover:bg-zinc-700 text-emerald-400 font-mono text-[9px] font-bold rounded-lg transition-colors cursor-pointer">Enter AR</button>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
       
@@ -1877,32 +2333,122 @@ export default function Interview() {
         </motion.div>
       </div>
 
-      {/* Interactive Transcripts, Tips, and Inputs Right Side Console */}
-      <div className="absolute top-24 right-5 w-[320px] md:w-[360px] max-h-[86vh] overflow-y-auto flex flex-col gap-3.5 z-10 pointer-events-none pr-1.5 scrollbar-thin scrollbar-thumb-zinc-800">
+      {/* Interactive Transcripts, Tips, and Inputs Right Side Console (VR Mode Only) */}
+      {isVRActive && (
+        <div className="absolute top-24 right-5 w-[320px] md:w-[360px] max-h-[86vh] overflow-y-auto flex flex-col gap-3.5 z-10 pointer-events-none pr-1.5 scrollbar-thin scrollbar-thumb-zinc-800">
         
-        {/* CURRENT QUESTION DISPLAY */}
-        {questions[currentQuestionIndex] && currentQuestionIndex < 8 && (
+        {/* CURRENT QUESTION DISPLAY WITH REAL ADAPTIVE METADATA */}
+        {(currentAdaptiveQuestion || questions[currentQuestionIndex]) && currentQuestionIndex < 8 && (
           <motion.div
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
-            className="pointer-events-auto bg-zinc-900 border border-zinc-800 rounded-2xl p-5 shadow-xl space-y-3 backdrop-blur-md text-left"
+            className="pointer-events-auto bg-zinc-900 border border-zinc-800 rounded-2xl p-4 md:p-5 shadow-xl space-y-3 backdrop-blur-md text-left"
           >
-            <span className="text-[9px] uppercase font-bold tracking-widest text-cyan-400 font-mono block">
-              Current Interview Question
-            </span>
-            <div className="text-sm md:text-base font-bold text-zinc-100 leading-relaxed font-sans">
-              "{questions[currentQuestionIndex].question}"
+            {/* Header: Category Badge + Difficulty Badge + Source Badge */}
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <span className="px-2.5 py-1 rounded-lg text-[9px] uppercase font-bold tracking-wider bg-cyan-950/70 border border-cyan-800/80 text-cyan-300 font-mono flex items-center gap-1.5">
+                <Brain className="w-3 h-3 text-cyan-400" />
+                {currentAdaptiveQuestion?.category || ROUNDS[currentRoundIndex]?.label || "Technical"}
+              </span>
+
+              <div className="flex items-center gap-1.5">
+                <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase font-mono border ${
+                  (currentAdaptiveQuestion?.difficulty || 'Entry') === 'Advanced'
+                    ? 'bg-rose-950/60 border-rose-700/60 text-rose-300'
+                    : (currentAdaptiveQuestion?.difficulty || 'Entry') === 'Mid'
+                    ? 'bg-amber-950/60 border-amber-700/60 text-amber-300'
+                    : 'bg-emerald-950/60 border-emerald-700/60 text-emerald-300'
+                }`}>
+                  {currentAdaptiveQuestion?.difficulty || 'Entry'}
+                </span>
+
+                <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase font-mono border ${
+                  (currentAdaptiveQuestion?.source || sessionSource) === 'AI_GENERATED'
+                    ? 'bg-cyan-950/60 border-cyan-500/60 text-cyan-300 flex items-center gap-1'
+                    : 'bg-amber-950/60 border-amber-600/60 text-amber-300'
+                }`}>
+                  {(currentAdaptiveQuestion?.source || sessionSource) === 'AI_GENERATED' ? (
+                    <>
+                      <Sparkles className="w-2.5 h-2.5 text-cyan-400" />
+                      AI Generated
+                    </>
+                  ) : (
+                    'Fallback Bank'
+                  )}
+                </span>
+              </div>
             </div>
-            {(questions[currentQuestionIndex].follow_up || questions[currentQuestionIndex].follow_up_if_weak) && (
-              <div className="text-[11px] text-zinc-300 mt-2 font-mono leading-relaxed pt-2 border-t border-zinc-800">
-                <span className="text-cyan-400 font-bold mr-1">Follow-up context:</span>
-                "{questions[currentQuestionIndex].follow_up || questions[currentQuestionIndex].follow_up_if_weak}"
+
+            {/* Question Text */}
+            <div className="text-sm md:text-base font-bold text-zinc-100 leading-relaxed font-sans">
+              "{currentAdaptiveQuestion?.question || questions[currentQuestionIndex]?.question}"
+            </div>
+
+            {/* Skills Tested */}
+            {currentAdaptiveQuestion?.skillsTested && currentAdaptiveQuestion.skillsTested.length > 0 && (
+              <div className="flex items-center gap-1.5 flex-wrap pt-1">
+                <span className="text-[9px] text-zinc-500 uppercase font-mono font-bold flex items-center gap-1">
+                  <Tag className="w-2.5 h-2.5" /> Skills:
+                </span>
+                {currentAdaptiveQuestion.skillsTested.map((skill: string, idx: number) => (
+                  <span key={idx} className="px-2 py-0.5 bg-zinc-800/80 border border-zinc-700/60 rounded text-[9px] font-mono text-zinc-300">
+                    {skill}
+                  </span>
+                ))}
               </div>
             )}
-            {questions[currentQuestionIndex].follow_up_if_strong && (
-              <div className="text-[11px] text-zinc-300 mt-2 font-mono leading-relaxed pt-2 border-t border-zinc-800">
-                <span className="text-green-500 font-bold mr-1">If Strong:</span>
-                "{questions[currentQuestionIndex].follow_up_if_strong}"
+
+            {/* Resume Evidence Context */}
+            {currentAdaptiveQuestion?.resumeEvidence && (
+              <div className="text-[10px] text-cyan-200/90 bg-cyan-950/30 p-2.5 rounded-xl border border-cyan-800/40 leading-relaxed flex items-start gap-2">
+                <FileText className="w-3.5 h-3.5 text-cyan-400 shrink-0 mt-0.5" />
+                <div>
+                  <strong className="text-cyan-300 font-mono uppercase text-[9px] block">Resume Evidence Context:</strong>
+                  {currentAdaptiveQuestion.resumeEvidence}
+                </div>
+              </div>
+            )}
+
+            {/* Job Requirement Context */}
+            {currentAdaptiveQuestion?.jobRequirement && (
+              <div className="text-[10px] text-purple-200/90 bg-purple-950/30 p-2.5 rounded-xl border border-purple-800/40 leading-relaxed flex items-start gap-2">
+                <Briefcase className="w-3.5 h-3.5 text-purple-400 shrink-0 mt-0.5" />
+                <div>
+                  <strong className="text-purple-300 font-mono uppercase text-[9px] block">Job Requirement Context:</strong>
+                  {currentAdaptiveQuestion.jobRequirement}
+                </div>
+              </div>
+            )}
+
+            {/* Adaptive Follow-up Indicator */}
+            {currentAdaptiveQuestion?.followUpOf && (
+              <div className="text-[10px] text-amber-200/90 bg-amber-950/30 p-2 rounded-xl border border-amber-800/40 leading-relaxed flex items-center gap-2">
+                <GitBranch className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                <span className="font-mono text-[9px] text-amber-300">
+                  <strong>Adaptive Follow-up:</strong> In-depth exploration of previous answer concept
+                </span>
+              </div>
+            )}
+
+            {/* Last Evaluation Feedback if available */}
+            {lastEvaluation && (
+              <div className="mt-2 pt-2.5 border-t border-zinc-800 text-[10px] space-y-1.5">
+                <div className="flex items-center justify-between text-[9px] font-mono">
+                  <span className="text-zinc-400 uppercase font-bold">Answer Evaluation:</span>
+                  <span className={`font-bold ${lastEvaluation.score >= 7 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                    Score: {lastEvaluation.score}/10
+                  </span>
+                </div>
+                {lastEvaluation.strengths?.[0] && (
+                  <p className="text-emerald-300/80 leading-relaxed">
+                    <strong className="text-emerald-400">Strength:</strong> {lastEvaluation.strengths[0]}
+                  </p>
+                )}
+                {lastEvaluation.missingConcepts?.[0] && (
+                  <p className="text-rose-300/80 leading-relaxed">
+                    <strong className="text-rose-400">Missing Concept:</strong> {lastEvaluation.missingConcepts[0]}
+                  </p>
+                )}
               </div>
             )}
           </motion.div>
@@ -1981,6 +2527,34 @@ export default function Interview() {
             </div>
           )}
 
+          {/* Submission Error Banner in VR Console */}
+          {submissionError && (
+            <div className="p-2.5 bg-amber-950/80 border-t border-amber-800 text-amber-200 text-[10px] flex items-center justify-between gap-2">
+              <span className="truncate">{submissionError.message}</span>
+              <div className="flex gap-1.5 shrink-0">
+                <button 
+                  onClick={() => {
+                    const ans = submissionError.answer;
+                    setSubmissionError(null);
+                    handleUserMessage(ans);
+                  }}
+                  className="px-2 py-0.5 rounded bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold uppercase text-[9px] cursor-pointer"
+                >
+                  Retry
+                </button>
+                <button 
+                  onClick={() => {
+                    setSubmissionError(null);
+                    handleSkipQuestion();
+                  }}
+                  className="px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold uppercase text-[9px] cursor-pointer"
+                >
+                  Skip
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Interactive Keyboard Submission Input */}
           {currentQuestionIndex < 8 && !loadingQuestions && (
             <div className="p-3 border-t border-zinc-800 bg-zinc-950/60 flex items-center gap-2.5">
@@ -1991,19 +2565,19 @@ export default function Interview() {
                  onKeyDown={(e) => e.key === 'Enter' && handleUserMessage(inputText)}
                  placeholder="Type your answer and press Enter..."
                  className="flex-1 bg-transparent border-none text-zinc-350 text-xs outline-none px-2 placeholder-zinc-500"
-                 disabled={isGenerating || loadingQuestions}
+                 disabled={isGenerating || loadingQuestions || isEvaluatingAnswer}
                />
                <button 
                  onClick={handleSkipQuestion}
-                 className="text-[9px] px-2 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-400 uppercase font-black tracking-wider transition-colors"
+                 className="text-[9px] px-2 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-400 uppercase font-black tracking-wider transition-colors cursor-pointer"
                  title="Skip question"
-                 disabled={loadingQuestions}
+                 disabled={loadingQuestions || isEvaluatingAnswer}
                >
                  skip
                </button>
                <button 
                  onClick={() => handleUserMessage(inputText)}
-                 disabled={!inputText.trim() || isGenerating || loadingQuestions}
+                 disabled={!inputText.trim() || isGenerating || loadingQuestions || isEvaluatingAnswer}
                  className="p-2.5 rounded-xl bg-cyan-500 hover:bg-cyan-600 disabled:opacity-30 disabled:hover:bg-cyan-500 text-zinc-950 disabled:cursor-not-allowed transition-colors cursor-pointer shrink-0 shadow-sm"
                >
                  <Send className="w-3.5 h-3.5 fill-zinc-950" />
@@ -2012,9 +2586,10 @@ export default function Interview() {
           )}
         </motion.div>
       </div>
+      )}
 
-      {/* Center Screen Subtitles Panel */}
-      {aiSpeech && (
+      {/* Center Screen Subtitles Panel (VR Mode Only) */}
+      {isVRActive && aiSpeech && (
         <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-10 pointer-events-none w-full max-w-2xl px-6">
           <motion.div 
             initial={{ opacity: 0, y: 10 }}
@@ -2215,51 +2790,248 @@ export default function Interview() {
         />
 
       ) : (
-        <div className="absolute inset-0 bg-zinc-950 flex flex-col items-center justify-center p-6 text-center select-none overflow-hidden">
-          {/* Elegant background lighting effect */}
-          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[350px] rounded-full bg-cyan-500/10 blur-[120px] pointer-events-none" />
-          
-          <div className="max-w-md w-full space-y-6 relative z-10 p-8 rounded-2xl border border-zinc-805 bg-zinc-900/60 backdrop-blur-md">
-            <div className="mx-auto w-16 h-16 rounded-full bg-cyan-950/50 border border-cyan-500/30 flex items-center justify-center text-cyan-400">
-              <Layers className="w-8 h-8 animate-pulse text-cyan-400" />
+        <div className="absolute inset-0 bg-[#090d16] flex flex-col items-center justify-start pt-24 pb-8 px-4 md:px-8 overflow-y-auto select-text">
+          {/* Subtle background glow */}
+          <div className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[700px] h-[400px] rounded-full bg-blue-600/10 blur-[130px] pointer-events-none" />
+
+          <div className="w-full max-w-4xl space-y-6 relative z-10">
+            {/* Standard Mode Banner */}
+            <div className="flex items-center justify-between bg-zinc-900/90 border border-zinc-800 px-5 py-3 rounded-2xl backdrop-blur-md">
+              <div className="flex items-center gap-2.5">
+                <div className="w-2.5 h-2.5 rounded-full bg-blue-500 animate-pulse" />
+                <span className="text-xs font-mono font-bold uppercase tracking-wider text-blue-400">Standard AI Interview Mode</span>
+                <span className="text-zinc-600 hidden sm:inline">•</span>
+                <span className="text-xs text-zinc-300 font-semibold hidden sm:inline">{targetRole} at {targetCompany}</span>
+              </div>
+              <span className="text-[11px] text-zinc-400 font-mono">
+                {currentQuestionIndex < 8 ? `Question ${currentQuestionIndex + 1} of 8` : 'Completed'}
+              </span>
             </div>
 
-            <div className="space-y-2">
-              <h3 className="text-xl font-bold text-zinc-100 tracking-tight">Interactive Boardroom Simulation</h3>
-              <p className="text-zinc-400 text-xs leading-relaxed">
-                Newyatra AI has automatically activated the **2D Desktop Workspace Console** because WebGL acceleration is unavailable in this environment.
-              </p>
-            </div>
+            {/* Main Question Card */}
+            <div className="bg-zinc-900/95 border border-zinc-800 rounded-3xl p-6 md:p-8 shadow-2xl space-y-5 backdrop-blur-xl text-left">
+              {/* Question metadata row */}
+              <div className="flex items-center justify-between flex-wrap gap-2 border-b border-zinc-800/80 pb-4">
+                <span className="px-3 py-1 rounded-xl text-xs uppercase font-bold tracking-wider bg-blue-950/70 border border-blue-800 text-blue-300 font-mono flex items-center gap-1.5">
+                  <Brain className="w-3.5 h-3.5 text-blue-400" />
+                  {currentAdaptiveQuestion?.category || ROUNDS[currentRoundIndex]?.label || "Technical"}
+                </span>
 
-            <div className="bg-zinc-950/80 border border-zinc-800/80 p-4 rounded-xl text-left space-y-3 font-mono text-[10px]">
-              <div className="flex justify-between border-b border-zinc-900 pb-1.5 text-zinc-500 font-bold">
-                <span>SYSTEM PARAMETER</span>
-                <span>STATUS</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-zinc-500 font-semibold">Active Evaluator:</span>
-                <span className="text-cyan-400 font-bold">Naya AI (Coaching Mode)</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-zinc-500 font-semibold">Target Enterprise:</span>
-                <span className="text-zinc-300 font-semibold">{targetCompany || "Niya AI"}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-zinc-500 font-semibold">Target Role:</span>
-                <span className="text-zinc-300 font-semibold">{targetRole || "Software Engineer"}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-zinc-500 font-semibold">A-Frame Engine:</span>
-                <span className="text-amber-500 font-semibold">Standby (Non-WebGL Context)</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-zinc-500 font-semibold">Voice Synthesis:</span>
-                <span className="text-emerald-400 font-bold">Fully Online & Connected</span>
-              </div>
-            </div>
+                <div className="flex items-center gap-2">
+                  <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase font-mono border ${
+                    (currentAdaptiveQuestion?.difficulty || 'Entry') === 'Advanced'
+                      ? 'bg-rose-950/60 border-rose-700 text-rose-300'
+                      : (currentAdaptiveQuestion?.difficulty || 'Entry') === 'Mid'
+                      ? 'bg-amber-950/60 border-amber-700 text-amber-300'
+                      : 'bg-emerald-950/60 border-emerald-700 text-emerald-300'
+                  }`}>
+                    {currentAdaptiveQuestion?.difficulty || 'Entry'} Level
+                  </span>
 
-            <div className="text-[10px] text-zinc-500">
-              Real-time speech chat and question pipelines are fully active and synchronized in the dashboard sidebar.
+                  <span className="px-3 py-1 rounded-full text-xs font-bold uppercase font-mono border bg-cyan-950/60 border-cyan-500/60 text-cyan-300 flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
+                    {(currentAdaptiveQuestion?.source || sessionSource) === 'AI_GENERATED' ? 'AI Grounded' : 'Fallback Bank'}
+                  </span>
+                </div>
+              </div>
+
+              {/* The Question Text */}
+              <div className="text-xl md:text-2xl font-bold text-zinc-100 leading-relaxed font-sans pt-1">
+                "{currentAdaptiveQuestion?.question || questions[currentQuestionIndex]?.question}"
+              </div>
+
+              {/* Skills Tested */}
+              {currentAdaptiveQuestion?.skillsTested && currentAdaptiveQuestion.skillsTested.length > 0 && (
+                <div className="flex items-center gap-2 flex-wrap pt-1">
+                  <span className="text-xs text-zinc-400 uppercase font-mono font-bold flex items-center gap-1">
+                    <Tag className="w-3 h-3 text-zinc-500" /> Tested Skills:
+                  </span>
+                  {currentAdaptiveQuestion.skillsTested.map((skill: string, idx: number) => (
+                    <span key={idx} className="px-3 py-1 bg-zinc-800 border border-zinc-700 rounded-lg text-xs font-mono text-zinc-300">
+                      {skill}
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              {/* Resume Evidence Context */}
+              {currentAdaptiveQuestion?.resumeEvidence && (
+                <div className="text-xs text-cyan-200/90 bg-cyan-950/40 p-4 rounded-2xl border border-cyan-800/50 leading-relaxed flex items-start gap-3">
+                  <FileText className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" />
+                  <div>
+                    <strong className="text-cyan-300 font-mono uppercase text-[10px] block mb-0.5">Resume Evidence Context:</strong>
+                    {currentAdaptiveQuestion.resumeEvidence}
+                  </div>
+                </div>
+              )}
+
+              {/* Job Requirement Context */}
+              {currentAdaptiveQuestion?.jobRequirement && (
+                <div className="text-xs text-purple-200/90 bg-purple-950/40 p-4 rounded-2xl border border-purple-800/50 leading-relaxed flex items-start gap-3">
+                  <Briefcase className="w-4 h-4 text-purple-400 shrink-0 mt-0.5" />
+                  <div>
+                    <strong className="text-purple-300 font-mono uppercase text-[10px] block mb-0.5">Job Requirement Context:</strong>
+                    {currentAdaptiveQuestion.jobRequirement}
+                  </div>
+                </div>
+              )}
+
+              {/* Answer Input Field & Error Preservation */}
+              <div className="pt-2">
+                {/* Submission Error Banner with Preserved Answer */}
+                {submissionError && (
+                  <div className="mb-4 p-4 rounded-2xl bg-amber-950/70 border border-amber-600/70 text-amber-200 text-xs flex flex-col sm:flex-row items-center justify-between gap-3 shadow-lg">
+                    <div className="flex items-center gap-2.5">
+                      <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0" />
+                      <div>
+                        <p className="font-bold">{submissionError.message}</p>
+                        <p className="text-[11px] text-amber-300/80 truncate max-w-md mt-0.5">Preserved answer: "{submissionError.answer.slice(0, 90)}..."</p>
+                      </div>
+                    </div>
+                    <div className="flex gap-2 shrink-0">
+                      <button 
+                        onClick={() => {
+                          const ans = submissionError.answer;
+                          setSubmissionError(null);
+                          handleUserMessage(ans);
+                        }}
+                        className="px-3.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold text-xs cursor-pointer transition-colors shadow-sm"
+                      >
+                        Retry Submission
+                      </button>
+                      <button 
+                        onClick={() => {
+                          setSubmissionError(null);
+                          handleSkipQuestion();
+                        }}
+                        className="px-3.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold text-xs cursor-pointer transition-colors"
+                      >
+                        Skip & Continue
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                <label className="block text-xs font-bold uppercase tracking-wider text-zinc-400 mb-2 font-mono">
+                  Your Answer
+                </label>
+                <textarea
+                  value={inputText}
+                  onChange={(e) => setInputText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      handleUserMessage(inputText);
+                    }
+                  }}
+                  rows={4}
+                  placeholder="Type your comprehensive answer here. Press Enter to submit (Shift+Enter for newline)..."
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl p-4 text-sm text-zinc-200 outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition-all placeholder-zinc-500 resize-none font-sans"
+                  disabled={isEvaluatingAnswer || loadingQuestions}
+                />
+
+                <div className="flex items-center justify-between mt-4">
+                  <button 
+                    onClick={handleSkipQuestion}
+                    className="px-5 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs uppercase font-bold tracking-wider transition-colors cursor-pointer"
+                    disabled={loadingQuestions || isEvaluatingAnswer}
+                  >
+                    Skip Question
+                  </button>
+
+                  <button 
+                    onClick={() => handleUserMessage(inputText)}
+                    disabled={!inputText.trim() || isEvaluatingAnswer || loadingQuestions}
+                    className="px-8 py-3 rounded-xl bg-cyan-500 hover:bg-cyan-400 disabled:opacity-40 text-zinc-950 font-bold text-xs uppercase tracking-wider transition-all cursor-pointer shadow-lg shadow-cyan-500/10 flex items-center gap-2 active:scale-95"
+                  >
+                    {isEvaluatingAnswer ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin text-zinc-950" />
+                        Evaluating Answer...
+                      </>
+                    ) : (
+                      <>
+                        Submit Answer
+                        <Send className="w-3.5 h-3.5 fill-current" />
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {/* Latest Evaluation Display with Rubric & Quota Detection */}
+              {lastEvaluation && (
+                <div className={`mt-5 p-5 rounded-2xl bg-zinc-950/95 border text-left space-y-3 ${
+                  lastEvaluation.isQuotaExceeded || lastEvaluation.source === "OFFLINE_EVALUATION"
+                    ? 'border-amber-700/60'
+                    : 'border-emerald-900/60'
+                }`}>
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div className="flex items-center gap-2">
+                      {lastEvaluation.isQuotaExceeded || lastEvaluation.source === "OFFLINE_EVALUATION" ? (
+                        <span className="px-2.5 py-1 rounded-lg text-[10px] uppercase font-bold tracking-wider bg-amber-950/80 border border-amber-600/80 text-amber-300 font-mono flex items-center gap-1.5">
+                          <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+                          {lastEvaluation.isQuotaExceeded ? 'Offline Evaluation • AI Quota Exceeded' : 'Offline Evaluation (Rubric)'}
+                        </span>
+                      ) : (
+                        <span className="px-2.5 py-1 rounded-lg text-[10px] uppercase font-bold tracking-wider bg-emerald-950/80 border border-emerald-600/80 text-emerald-300 font-mono flex items-center gap-1.5">
+                          <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
+                          AI Evaluation • Gemini
+                        </span>
+                      )}
+                    </div>
+
+                    <span className={`text-xs font-mono font-extrabold px-3 py-1 rounded-lg border ${
+                      lastEvaluation.score >= 7 
+                        ? 'text-emerald-300 bg-emerald-950/80 border-emerald-700' 
+                        : 'text-amber-300 bg-amber-950/80 border-amber-700'
+                    }`}>
+                      Score: {lastEvaluation.score}/10 ({lastEvaluation.verdict})
+                    </span>
+                  </div>
+
+                  {/* Explicit quota warning banner */}
+                  {lastEvaluation.notice && (
+                    <div className="p-3 rounded-xl bg-amber-950/40 border border-amber-700/50 text-amber-200 text-xs font-mono flex items-center gap-2">
+                      <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                      <span>{lastEvaluation.notice}</span>
+                    </div>
+                  )}
+
+                  {/* Rubric Criteria: Strengths & Missing Concepts */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs pt-1">
+                    {lastEvaluation.strengths?.length > 0 && (
+                      <div className="p-3 rounded-xl bg-zinc-900/80 border border-zinc-800">
+                        <strong className="text-emerald-400 font-mono uppercase text-[10px] block mb-1">Strengths:</strong>
+                        <ul className="list-disc list-inside text-zinc-300 space-y-1 text-[11px]">
+                          {lastEvaluation.strengths.map((s: string, idx: number) => (
+                            <li key={idx}>{s}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {lastEvaluation.missingConcepts?.length > 0 && (
+                      <div className="p-3 rounded-xl bg-zinc-900/80 border border-zinc-800">
+                        <strong className="text-rose-400 font-mono uppercase text-[10px] block mb-1">Missing / Gap Points:</strong>
+                        <ul className="list-disc list-inside text-zinc-300 space-y-1 text-[11px]">
+                          {lastEvaluation.missingConcepts.map((m: string, idx: number) => (
+                            <li key={idx}>{m}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Improvement Feedback */}
+                  {lastEvaluation.improvementFeedback && (
+                    <div className="text-xs text-zinc-300 leading-relaxed bg-zinc-900/50 p-3 rounded-xl border border-zinc-800/80">
+                      <strong className="text-cyan-400 font-mono uppercase text-[10px] block mb-0.5">Improvement Recommendation:</strong>
+                      {lastEvaluation.improvementFeedback}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -2467,7 +3239,7 @@ function getFallbackLocalQuestions(roundType: string, role: string, company: str
         id: 7,
         question: "If you had to host and run this project with a strict budget of $10 per month, what hosting, platform, and tier architecture would you swap in?",
         follow_up: "How would you handle analytics logging and scheduled crons within this constrained budget?",
-        expected_points: ["Proposes serverless, static-hosting portals (Vercel, Netlify, Cloudflare Pages)", "Utilizes free Firestore/Supabase tier bounds or Docker containers in free tiers", "Balances scale demands with zero-cost compute constraints"]
+        expected_points: ["Proposes serverless, static-hosting portals (Vercel, Netlify, Cloudflare Pages)", "Utilizes free Firestore/PostgreSQL tier bounds or Docker containers in free tiers", "Balances scale demands with zero-cost compute constraints"]
       },
       {
         id: 8,

@@ -404,16 +404,17 @@ export default function App() {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (u) => {
       if (!u && localStorage.getItem("guest_session") === "true") {
-        const payload = { user_id: "guest-user-123" };
+        const guestUid = localStorage.getItem("guest_uid") || "guest-user-123";
+        const payload = { user_id: guestUid };
         const payloadB64 = btoa(JSON.stringify(payload))
           .replace(/=/g, "")
           .replace(/\+/g, "-")
           .replace(/\//g, "_");
         
         setUser({
-          uid: "guest-user-123",
-          email: localStorage.getItem("guest_email") || "jsoniyasonu0410@gmail.com",
-          displayName: "Sonu",
+          uid: guestUid,
+          email: localStorage.getItem("guest_email") || "student@yatranew.ai",
+          displayName: "Student",
           getIdToken: async () => `header.${payloadB64}.signature`
         } as any);
         setLoading(false);

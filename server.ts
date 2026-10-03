@@ -5,7 +5,7 @@ import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import fs from "fs";
 import { matchResumeToRegistry, COMPANIES_REGISTRY } from "./src/data/companiesRegistry";
-import { isSupabaseConfigured, supabase } from "./src/lib/supabase";
+import { isPostgresConfigured, testDbConnection, searchEscoOccupations, getSkillsForOccupation } from "./src/lib/db";
 import { extractTextFromPDF } from "./src/lib/pdfParser";
 import { normalizeSkills } from "./src/lib/skillNormalizer";
 import { matchSkillsToEscoOccupations } from "./src/lib/escoMatcher";
@@ -13,7 +13,22 @@ import { rankEngineeringCareers } from "./src/lib/careerRanker";
 import { adzunaProvider } from "./src/lib/jobs/adzunaProvider";
 import { enrichJobsWithMatching, determinePrimaryTargetRole } from "./src/lib/jobs/liveJobMatcher";
 import { generateJobInterviewSession } from "./src/lib/interview/jobInterviewEngine";
+import { 
+  createAdaptiveSession, 
+  processAnswerAndAdapt, 
+  generateFinalSessionReport, 
+  sessionStore 
+} from "./src/lib/interview/adaptiveInterviewEngine";
 import { generateWithAstra } from "./src/lib/ai/openaiProvider";
+import {
+  extractCandidateNameFromResume,
+  extractEducationFromResume,
+  extractExperienceFromResume,
+  extractLanguagesFromResume,
+  extractHobbiesFromResume
+} from "./src/lib/profile/candidateProfileBuilder";
+
+const DEFAULT_MODEL = process.env.MODEL_NAME || "gemini-3.8-flash";
 
 const firebaseConfigPath = path.join(process.cwd(), "firebase-applet-config.json");
 let firebaseConfig: any = {};
@@ -413,11 +428,25 @@ const DOMAIN_KEYWORD_MAP: Record<string, string> = {
   "sustainable design": "Sustainable Design",
   "urban design": "Urban Design",
   "landscape architecture": "Landscape Architecture",
-  // ── ACCOUNTING / FINANCE ──────────────────────────────────────────────
+  // ── ACCOUNTING / FINANCE / COMMERCIAL PRACTICE ────────────────────────
+  "basic computer knowledge": "Basic Computer Knowledge",
+  "computer knowledge": "Basic Computer Knowledge",
+  "english typing": "English Typing",
+  "typing": "English Typing",
+  "english shorthand": "English Shorthand",
+  "shorthand": "English Shorthand",
+  "cost and management account": "Cost and Management Accounting",
+  "cost and management accounting": "Cost and Management Accounting",
+  "cost accounting": "Cost and Management Accounting",
+  "management accounting": "Cost and Management Accounting",
+  "dtp": "Desktop Publishing (DTP)",
+  "desktop publishing": "Desktop Publishing (DTP)",
+  "commercial practice": "Commercial Practice",
   "gaap": "GAAP Accounting",
   "ifrs": "IFRS Standards",
   "auditing": "Auditing",
   "tally": "Tally ERP",
+  "tally erp": "Tally ERP",
   "sap fi": "SAP FI",
   "sap": "SAP ERP",
   "ledger": "Ledger Accounting",
@@ -589,8 +618,19 @@ function getFallbackResumeDetails(resumeText: string) {
   // NEVER invents skills not present in the text
   const verifiedSkills = extractVerifiedSkillsFromText(resumeText);
 
+  // Extract candidate identity, education, experience, languages, hobbies
+  const candidateName = extractCandidateNameFromResume(resumeText);
+  const education = extractEducationFromResume(resumeText);
+  const rawExperience = extractExperienceFromResume(resumeText);
+  const languages = extractLanguagesFromResume(resumeText);
+  const hobbies = extractHobbiesFromResume(resumeText);
+
   // Candidate title detection for top matching role
   const candidateRoles: string[] = [];
+  if (norm.includes("commercial practice") || norm.includes("diploma in commercial") || norm.includes("tally") || norm.includes("cost and management")) {
+    candidateRoles.push("Commercial Practice Specialist");
+    candidateRoles.push("Accounts Executive");
+  }
   if (norm.includes("mechanical design engineer")) candidateRoles.push("Mechanical Design Engineer");
   else if (norm.includes("mechanical engineer")) candidateRoles.push("Mechanical Engineer");
   if (norm.includes("structural engineer")) candidateRoles.push("Structural Engineer");
@@ -605,6 +645,8 @@ function getFallbackResumeDetails(resumeText: string) {
   const allRoles = [...new Set([...candidateRoles, ...matchResult.recommendedRoles])];
 
   console.info("[Resume Fallback Diagnostics]", {
+    candidateName,
+    education,
     detectedDomain: matchResult.matchedCategory,
     verifiedSkillCount: verifiedSkills.length,
     skills: verifiedSkills,
@@ -613,6 +655,12 @@ function getFallbackResumeDetails(resumeText: string) {
   });
 
   return {
+    candidate_name: candidateName,
+    education,
+    experience: rawExperience.map(e => ({ role: e, company: "" })),
+    internships: rawExperience.filter(e => /internship|trainee|articleship/i.test(e)).map(e => ({ role: e, company: "" })),
+    languages,
+    hobbies,
     skills: verifiedSkills,
     matchingRoles: allRoles,
     matchingCompanies: matchResult.companies.slice(0, 6).map(c => ({
@@ -950,6 +998,41 @@ async function startServer() {
     }
   };
 
+  // PostgreSQL Health and Diagnostic Endpoint
+  app.get("/api/health", async (_req, res) => {
+    const dbOk = await testDbConnection();
+    res.json({
+      status: "ok",
+      database: "PostgreSQL",
+      connected: dbOk,
+      timestamp: new Date().toISOString()
+    });
+  });
+
+  // ESCO Occupations Search Endpoint (backed by PostgreSQL)
+  app.get("/api/esco/occupations", async (req, res) => {
+    try {
+      const q = (req.query.q as string) || "";
+      const occupations = await searchEscoOccupations(q, 10);
+      res.json({ success: true, count: occupations.length, occupations });
+    } catch (err: any) {
+      console.error("[ESCO Occupations Search Error]", err);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // ESCO Skills for Occupation Endpoint (backed by PostgreSQL)
+  app.get("/api/esco/skills", async (req, res) => {
+    try {
+      const role = (req.query.role as string) || "";
+      const skills = await getSkillsForOccupation(role, 20);
+      res.json({ success: true, count: skills.length, skills });
+    } catch (err: any) {
+      console.error("[ESCO Skills Query Error]", err);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   // API validations and Chat setup
   const chatSessions = new Map<string, any>();
 
@@ -980,7 +1063,7 @@ async function startServer() {
         throw new Error("API_KEY_INVALID");
       }
       const session = ai.chats.create({
-        model: "gemini-3.6-flash",
+        model: DEFAULT_MODEL,
         config: {
           systemInstruction: req.body.systemInstruction,
           temperature: 0.7,
@@ -1152,7 +1235,7 @@ Return ONLY this structured JSON matching this schema:
 }`;
 
       const response = await retryWithBackoff(() => ai.models.generateContent({
-        model: "gemini-3.6-flash",
+        model: DEFAULT_MODEL,
         contents: prompt,
         config: {
           maxOutputTokens: 8192, responseMimeType: "application/json",
@@ -1398,7 +1481,7 @@ RESUME TEXT:
 ${resumeText.substring(0, 16000)}`;
 
       const response = await retryWithBackoff(() => ai.models.generateContent({
-        model: "gemini-3.6-flash",
+        model: DEFAULT_MODEL,
         contents: prompt,
         config: {
           maxOutputTokens: 4096, responseMimeType: "application/json",
@@ -1733,7 +1816,7 @@ RESUME TEXT:
 ${resumeText.substring(0, 8000)}`;
 
       const response = await retryWithBackoff(() => ai.models.generateContent({
-        model: "gemini-3.6-flash",
+        model: DEFAULT_MODEL,
         contents: prompt,
         config: {
           maxOutputTokens: 8192,
@@ -2013,7 +2096,7 @@ ${resumeText.substring(0, 8000)}`;
             id: 7,
             question: "If you had to host and run this project with a strict budget of $10 per month, what hosting, platform, and tier architecture would you swap in?",
             follow_up: "How would you handle analytics logging and scheduled crons within this constrained budget?",
-            expected_points: ["Proposes serverless, static-hosting portals (Vercel, Netlify, Cloudflare Pages)", "Utilizes free Firestore/Supabase tier bounds or Docker containers in free tiers", "Balances scale demands with zero-cost compute constraints"]
+            expected_points: ["Proposes serverless, static-hosting portals (Vercel, Netlify, Cloudflare Pages)", "Utilizes free Firestore/PostgreSQL tier bounds or Docker containers in free tiers", "Balances scale demands with zero-cost compute constraints"]
           },
           {
             id: 8,
@@ -2172,7 +2255,7 @@ Return ONLY this JSON, containing EXACTLY 5 matching companies (sorted by match_
 }`;
 
       const response = await retryWithBackoff(() => ai.models.generateContent({
-        model: "gemini-3.6-flash",
+        model: DEFAULT_MODEL,
         contents: prompt,
         config: {
           maxOutputTokens: 8192, responseMimeType: "application/json",
@@ -2332,7 +2415,7 @@ Return ONLY this JSON:
 ]`;
 
       const response = await retryWithBackoff(() => ai.models.generateContent({
-        model: "gemini-3.6-flash",
+        model: DEFAULT_MODEL,
         contents: prompt,
         config: {
           maxOutputTokens: 8192, responseMimeType: "application/json",
@@ -2403,6 +2486,215 @@ Return ONLY this JSON:
     } catch (error: any) {
       console.error("[Interview Engine API Error]", error);
       res.status(500).json({ error: error.message || "Failed to generate job interview session" });
+    }
+  });
+
+  // ── USER-KEYED CANONICAL CANDIDATE PROFILE STORAGE ───────────────────────
+  const CANDIDATE_PROFILES_DIR = path.join(process.cwd(), ".candidate_profiles");
+  if (!fs.existsSync(CANDIDATE_PROFILES_DIR)) {
+    try { fs.mkdirSync(CANDIDATE_PROFILES_DIR, { recursive: true }); } catch (_) {}
+  }
+
+  const candidateProfileStore = new Map<string, any>();
+
+  function saveCandidateProfile(userId: string, profile: any) {
+    candidateProfileStore.set(userId, profile);
+    try {
+      fs.writeFileSync(
+        path.join(CANDIDATE_PROFILES_DIR, `${encodeURIComponent(userId)}.json`),
+        JSON.stringify(profile, null, 2),
+        "utf-8"
+      );
+    } catch (err) {
+      console.warn("[CandidateProfileStore] Could not write profile to disk:", err);
+    }
+  }
+
+  function getCandidateProfile(userId: string): any | null {
+    if (candidateProfileStore.has(userId)) {
+      return candidateProfileStore.get(userId);
+    }
+    const filePath = path.join(CANDIDATE_PROFILES_DIR, `${encodeURIComponent(userId)}.json`);
+    if (fs.existsSync(filePath)) {
+      try {
+        const data = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+        candidateProfileStore.set(userId, data);
+        return data;
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  app.post("/api/candidate/profile", authenticate, async (req, res) => {
+    try {
+      const uid = (req as any).user?.uid || "guest-user-123";
+      const { profile } = req.body;
+      if (!profile || typeof profile !== "object") {
+        return res.status(400).json({ success: false, error: "Valid profile object is required." });
+      }
+      profile.userId = uid;
+      profile.updatedAt = new Date().toISOString();
+      saveCandidateProfile(uid, profile);
+      return res.json({ success: true, profile });
+    } catch (err: any) {
+      console.error("[Candidate Profile Save Error]", err);
+      return res.status(500).json({ success: false, error: err?.message || "Failed to save candidate profile" });
+    }
+  });
+
+  app.get("/api/candidate/profile", authenticate, async (req, res) => {
+    try {
+      const uid = (req as any).user?.uid || "guest-user-123";
+      const profile = getCandidateProfile(uid);
+      if (!profile) {
+        return res.json({ success: false, profile: null, message: "No profile found for this user." });
+      }
+      return res.json({ success: true, profile });
+    } catch (err: any) {
+      console.error("[Candidate Profile Fetch Error]", err);
+      return res.status(500).json({ success: false, error: err?.message || "Failed to fetch candidate profile" });
+    }
+  });
+
+  app.delete("/api/candidate/profile", authenticate, async (req, res) => {
+    try {
+      const uid = (req as any).user?.uid || "guest-user-123";
+      candidateProfileStore.delete(uid);
+      const filePath = path.join(CANDIDATE_PROFILES_DIR, `${encodeURIComponent(uid)}.json`);
+      if (fs.existsSync(filePath)) {
+        try { fs.unlinkSync(filePath); } catch (_) {}
+      }
+      return res.json({ success: true, message: "Candidate profile cleared." });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err?.message || "Failed to delete candidate profile" });
+    }
+  });
+
+  // ── ADAPTIVE INTERVIEW ENGINE ENDPOINTS (PHASES 2-8, 10, 12) ──────────────────
+
+  // 1. Start adaptive interview session
+  app.post("/api/interview/session/start", authenticate, async (req, res) => {
+    try {
+      const userId = (req as any).user?.uid || "guest-user-123";
+      const { 
+        candidateProfile, 
+        candidateProfileId, 
+        selectedJob, 
+        jobId, 
+        targetCompany, 
+        targetRole, 
+        mode, 
+        isVR, 
+        totalPlannedQuestions 
+      } = req.body;
+
+      const explicitMode: "STANDARD" | "VR" = mode === "VR" || isVR === true ? "VR" : "STANDARD";
+
+      const { session, firstQuestion } = await createAdaptiveSession(
+        {
+          userId,
+          candidateProfile,
+          candidateProfileId,
+          selectedJob,
+          jobId,
+          targetCompany,
+          targetRole,
+          mode: explicitMode,
+          totalPlannedQuestions: typeof totalPlannedQuestions === "number" ? totalPlannedQuestions : 5
+        },
+        ai
+      );
+
+      res.json({
+        success: true,
+        sessionId: session.sessionId,
+        mode: session.mode,
+        session,
+        currentQuestion: firstQuestion
+      });
+    } catch (error: any) {
+      console.error("[Adaptive Session Start Error]", error);
+      res.status(500).json({ success: false, error: error.message || "Failed to start interview session" });
+    }
+  });
+
+  // 2. Process candidate answer, evaluate, adapt difficulty, and fetch next question
+  app.post("/api/interview/session/answer", authenticate, async (req, res) => {
+    try {
+      const { sessionId, questionId, answer } = req.body;
+      if (!sessionId) {
+        return res.status(400).json({ success: false, error: "sessionId is required" });
+      }
+
+      const result = await processAnswerAndAdapt(
+        sessionId,
+        questionId,
+        answer || "",
+        ai
+      );
+
+      res.json({
+        success: true,
+        sessionId: result.session.sessionId,
+        questionId: result.evaluation.questionId,
+        evaluation: result.evaluation,
+        nextQuestion: result.nextQuestion,
+        isComplete: result.isComplete,
+        currentSequence: result.session.currentSequence,
+        totalPlannedQuestions: result.session.totalPlannedQuestions,
+        currentDifficulty: result.session.currentDifficulty
+      });
+    } catch (error: any) {
+      console.error("[Adaptive Session Answer Error]", error);
+      res.status(500).json({ success: false, error: error.message || "Failed to process interview answer" });
+    }
+  });
+
+  // 3. Finalize interview session and compute comprehensive report
+  app.post("/api/interview/session/complete", authenticate, async (req, res) => {
+    try {
+      const { sessionId } = req.body;
+      if (!sessionId) {
+        return res.status(400).json({ success: false, error: "sessionId is required" });
+      }
+
+      const session = sessionStore.get(sessionId);
+      if (!session) {
+        return res.status(404).json({ success: false, error: "Interview session not found" });
+      }
+
+      const report = generateFinalSessionReport(session);
+      res.json({
+        success: true,
+        sessionId,
+        report
+      });
+    } catch (error: any) {
+      console.error("[Adaptive Session Complete Error]", error);
+      res.status(500).json({ success: false, error: error.message || "Failed to complete interview session" });
+    }
+  });
+
+  // 4. Retrieve active session (for browser refresh recovery)
+  app.get("/api/interview/session/:sessionId", authenticate, async (req, res) => {
+    try {
+      const { sessionId } = req.params;
+      const session = sessionStore.get(sessionId);
+      if (!session) {
+        return res.status(404).json({ success: false, error: "Interview session not found" });
+      }
+
+      const lastQuestion = session.questions[session.questions.length - 1];
+      const isComplete = session.status === "completed" || session.currentSequence >= session.totalPlannedQuestions;
+
+      res.json({
+        success: true,
+        session,
+        currentQuestion: lastQuestion,
+        isComplete
+      });
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message || "Failed to get interview session" });
     }
   });
 
@@ -2491,7 +2783,7 @@ Return ONLY this JSON:
 }`;
       
       const response = await ai.models.generateContent({
-        model: "gemini-3.6-flash",
+        model: DEFAULT_MODEL,
         contents: prompt,
         config: {
           maxOutputTokens: 8192, responseMimeType: "application/json",
@@ -2555,20 +2847,53 @@ Return ONLY this JSON:
     if (!question || !answer) {
       return res.status(400).json({ error: "Question and answer are required" });
     }
-    try {
-      if (!process.env.GEMINI_API_KEY) {
-        return res.json({
-          score: 7,
+
+    const trimmed = (answer || "").trim();
+    const words = trimmed.split(/\s+/).length;
+
+    const computeFallbackScore = () => {
+      if (words < 5) {
+        return {
+          score: 1,
           max_score: 10,
-          verdict: "Good",
-          what_was_good: ["Clear delivery"],
-          what_was_missing: ["Deeper examples"],
+          verdict: "Very Weak",
+          what_was_good: [],
+          what_was_missing: ["Answer was too brief to evaluate technical competence."],
           filler_words: [],
-          confidence_signal: "High",
-          ideal_answer_in_one_line: "A concise response with examples.",
-          interviewer_would_say: "Good. Let's move on.",
-          ask_follow_up: false,
-          follow_up_question: ""
+          confidence_signal: "Low",
+          ideal_answer_in_one_line: "A detailed response with core principles and examples.",
+          interviewer_would_say: "That was quite brief. Could you elaborate on the fundamentals?",
+          ask_follow_up: true,
+          follow_up_question: "Could you walk through the specific technical mechanics in detail?"
+        };
+      }
+      const score = words >= 80 ? 8 : words >= 45 ? 7 : words >= 20 ? 5 : 3;
+      const verdict = score >= 8 ? "Excellent" : score >= 6 ? "Good" : score >= 4 ? "Average" : "Weak";
+      return {
+        score,
+        max_score: 10,
+        verdict,
+        what_was_good: words >= 40 ? ["Direct addressing of the core prompt", "Clear technical communication"] : ["Clear attempt"],
+        what_was_missing: words < 60 ? ["Could elaborate further on system edge cases and validation metrics"] : [],
+        filler_words: [],
+        confidence_signal: words >= 50 ? "High" : "Medium",
+        ideal_answer_in_one_line: "A structured explanation detailing technical trade-offs and validation.",
+        interviewer_would_say: score >= 7 ? "Solid technical explanation. Let's move forward." : "Understood. Consider providing more concrete implementation details.",
+        ask_follow_up: score <= 5,
+        follow_up_question: score <= 5 ? "How would you handle boundary conditions and error scenarios for that implementation?" : ""
+      };
+    };
+
+    try {
+      if (!process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEY === "dummy_key") {
+        const fallback = computeFallbackScore();
+        return res.json({
+          ...fallback,
+          source: "OFFLINE_EVALUATION",
+          is_offline: true,
+          quota_exceeded: false,
+          notice: "Offline evaluation mode active.",
+          interviewer_would_say: fallback.score >= 7 ? "Response recorded via offline rubric. Advancing to next question." : "Understood. Response recorded via offline rubric."
         });
       }
       const prompt = `TASK: INSTANT_ANSWER_SCORER
@@ -2597,7 +2922,7 @@ Return ONLY this JSON, nothing else:
 }`;
 
       const response = await retryWithBackoff(() => ai.models.generateContent({
-        model: "gemini-3.6-flash",
+        model: DEFAULT_MODEL,
         contents: prompt,
         config: {
           maxOutputTokens: 8192, responseMimeType: "application/json",
@@ -2622,27 +2947,28 @@ Return ONLY this JSON, nothing else:
       }));
       const responseText = response.text || "";
       let cleanText = responseText.trim();
-      if (cleanText.startsWith("\`\`\`json")) cleanText = cleanText.substring(7);
-      else if (cleanText.startsWith("\`\`\`")) cleanText = cleanText.substring(3);
-      if (cleanText.endsWith("\`\`\`")) cleanText = cleanText.substring(0, cleanText.length - 3);
+      if (cleanText.startsWith("```json")) cleanText = cleanText.substring(7);
+      else if (cleanText.startsWith("```")) cleanText = cleanText.substring(3);
+      if (cleanText.endsWith("```")) cleanText = cleanText.substring(0, cleanText.length - 3);
       cleanText = cleanText.trim();
       
       const parsedData = JSON.parse(cleanText);
       res.json(parsedData);
-    } catch (e) {
-      console.log("Fallback triggered (omitting details to avoid platform flags)");
+    } catch (e: any) {
+      console.info("[Answer Score] Falling back to structured heuristic scorer.");
+      const errStr = String(e?.message || e || "");
+      const errStatus = (e as any)?.status || (e as any)?.statusCode;
+      const isQuota = errStatus === 429 || errStr.includes("429") || errStr.toLowerCase().includes("quota") || errStr.toLowerCase().includes("resource_exhausted");
+      const fallback = computeFallbackScore();
       res.json({
-        score: 7,
-        max_score: 10,
-        verdict: "Good",
-        what_was_good: ["Good effort"],
-        what_was_missing: ["API Error - Details unavailable"],
-        filler_words: [],
-        confidence_signal: "Medium",
-        ideal_answer_in_one_line: "Fallback expected point",
-        interviewer_would_say: "Got it.",
-        ask_follow_up: false,
-        follow_up_question: ""
+        ...fallback,
+        source: "OFFLINE_EVALUATION",
+        is_offline: true,
+        quota_exceeded: isQuota,
+        notice: isQuota ? "AI evaluation temporarily unavailable due to API quota." : "AI evaluation unavailable; running offline evaluation.",
+        interviewer_would_say: isQuota 
+          ? "AI evaluation temporarily unavailable due to API quota. Response recorded in offline mode."
+          : (fallback.score >= 7 ? "Response recorded via offline rubric. Advancing to next question." : "Understood. Response recorded via offline rubric.")
       });
     }
   });
@@ -2724,7 +3050,7 @@ Return ONLY this JSON, nothing else:
 }`;
 
       const response = await retryWithBackoff(() => ai.models.generateContent({
-        model: "gemini-3.6-flash",
+        model: DEFAULT_MODEL,
         contents: prompt,
         config: {
           maxOutputTokens: 8192, responseMimeType: "application/json",
@@ -2873,7 +3199,7 @@ Produce the complete evaluation of the interview in this JSON:
 }`;
 
       const response = await retryWithBackoff(() => ai.models.generateContent({
-        model: "gemini-3.6-flash",
+        model: DEFAULT_MODEL,
         contents: prompt,
         config: {
           maxOutputTokens: 8192, responseMimeType: "application/json",
@@ -2980,7 +3306,7 @@ Produce the complete evaluation of the interview in this JSON:
     const isGeminiConfigured = Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim() !== '' && process.env.GEMINI_API_KEY !== 'MY_GEMINI_API_KEY');
     const isAdzunaConfigured = Boolean(process.env.ADZUNA_APP_ID && process.env.ADZUNA_APP_KEY);
     console.log(`Gemini configured: ${isGeminiConfigured}`);
-    console.log(`Supabase configured: ${isSupabaseConfigured}`);
+    console.log(`PostgreSQL configured: ${isPostgresConfigured}`);
     console.log(`Adzuna configured: ${isAdzunaConfigured}`);
 
     if (isGeminiConfigured) {
@@ -2989,7 +3315,7 @@ Produce the complete evaluation of the interview in this JSON:
       try {
         console.log("[GEMINI API Test] Executing minimal API call...");
         const response = await ai.models.generateContent({
-          model: "gemini-3.6-flash",
+          model: DEFAULT_MODEL,
           contents: "Respond with exact text: OK",
         });
         console.log(`[GEMINI API Test] Result: SUCCESS (Response: "${response.text?.trim()}")`);
@@ -3002,20 +3328,20 @@ Produce the complete evaluation of the interview in this JSON:
       console.log("[GEMINI API Test] Result: SKIPPED (GEMINI_API_KEY not configured)");
     }
 
-    if (isSupabaseConfigured) {
+    if (isPostgresConfigured) {
       try {
-        console.log("[Supabase Test] Executing minimal connection check...");
-        const { data, error } = await supabase.from('esco_skills').select('*').limit(1);
-        if (error) {
-          console.warn(`[Supabase Test] Result: ERROR (${error.message})`);
+        console.log("[PostgreSQL Test] Executing minimal connection check...");
+        const dbOk = await testDbConnection();
+        if (dbOk) {
+          console.log("[PostgreSQL Test] Result: SUCCESS (Connected to PostgreSQL yatranew_ai database)");
         } else {
-          console.log("[Supabase Test] Result: SUCCESS (Connected to Supabase public.esco_skills table)");
+          console.warn("[PostgreSQL Test] Result: ERROR (Could not connect to PostgreSQL)");
         }
       } catch (err: any) {
-        console.warn(`[Supabase Test] Result: ERROR (${err.message || String(err)})`);
+        console.warn(`[PostgreSQL Test] Result: ERROR (${err.message || String(err)})`);
       }
     } else {
-      console.log("[Supabase Test] Result: SKIPPED (SUPABASE_URL / SUPABASE_PUBLISHABLE_KEY not configured)");
+      console.log("[PostgreSQL Test] Result: SKIPPED (DATABASE_URL not configured in .env)");
     }
   }
 

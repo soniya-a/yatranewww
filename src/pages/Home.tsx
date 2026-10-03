@@ -149,6 +149,7 @@ export default function Home() {
   useEffect(() => {
     fetchSavedRoadmaps();
     fetchInterviewReports();
+    fetchPersistedCandidateProfile();
   }, []);
 
   // ── Business Logic Handlers (all preserved exactly) ──────────────────────
@@ -341,6 +342,33 @@ export default function Home() {
     }
   };
 
+  const fetchPersistedCandidateProfile = async () => {
+    const uid = auth.currentUser?.uid || localStorage.getItem("guest_uid") || "guest-user-123";
+    try {
+      const token = (auth.currentUser ? await auth.currentUser.getIdToken() : null) || (() => {
+        const payload = { user_id: uid };
+        const payloadB64 = btoa(JSON.stringify(payload)).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+        return `header.${payloadB64}.signature`;
+      })();
+
+      const res = await fetch("/api/candidate/profile", {
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.profile) {
+          setCandidateProfile(data.profile);
+          if (data.profile.skills?.length > 0) {
+            setCandidateSkills(data.profile.skills.join(", "));
+          }
+          if (data.profile.userSelectedTargetRole) {
+            setSelectedRole(data.profile.userSelectedTargetRole);
+          }
+        }
+      }
+    } catch (_) {}
+  };
+
   const handleParseResume = async (overrideText?: string) => {
     const textToParse = overrideText !== undefined ? overrideText : resumeInput;
     if (!textToParse.trim()) return;
@@ -416,17 +444,27 @@ export default function Home() {
         if (mlData) {
           setMlParseResult(mlData);
         }
-        // Establish single source of truth canonical profile
+        // Establish single source of truth canonical profile grounded in the actual document
         const canonical = buildCanonicalProfile(data, mlData, textToParse);
+        canonical.userId = uid;
         setCandidateProfile(canonical);
 
-        if (data.skills && data.skills.length > 0) {
-          setCandidateSkills(data.skills.join(", "));
+        if (canonical.skills && canonical.skills.length > 0) {
+          setCandidateSkills(canonical.skills.join(", "));
         }
-        if (data.matchingCompanies && data.matchingCompanies.length > 0) {
-          setSelectedRole(data.matchingCompanies[0].role);
-          setSelectedCompany(data.matchingCompanies[0].company);
-        }
+
+        // Persist profile to backend keyed strictly by authenticated userId
+        fetch("/api/candidate/profile", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${token}`
+          },
+          body: JSON.stringify({ profile: canonical })
+        }).catch(err => console.warn("[CandidateProfile] Persist warning:", err));
+
+        // Note: Target role is kept strictly separate from resume-derived profile.
+        // It is NOT automatically set or fabricated.
       }, 600);
 
     } catch (error: any) {
@@ -443,6 +481,30 @@ export default function Home() {
         setIsParsingResume(false);
         setAiThinkingStep(0);
       }, 650);
+    }
+  };
+
+  const handleSelectTargetRole = async (role: string) => {
+    setSelectedRole(role);
+    if (candidateProfile) {
+      const updated = { ...candidateProfile, userSelectedTargetRole: role };
+      setCandidateProfile(updated);
+      try {
+        const uid = auth.currentUser?.uid || localStorage.getItem("guest_uid") || "guest-user-123";
+        const token = (auth.currentUser ? await auth.currentUser.getIdToken() : null) || (() => {
+          const payload = { user_id: uid };
+          const payloadB64 = btoa(JSON.stringify(payload)).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+          return `header.${payloadB64}.signature`;
+        })();
+        await fetch("/api/candidate/profile", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${token}`
+          },
+          body: JSON.stringify({ profile: updated })
+        });
+      } catch (_) {}
     }
   };
 
@@ -548,13 +610,32 @@ export default function Home() {
 
   // Helper: detect domain from parse results
   const getDomainFromProfile = (): string => {
-    // 1. Prioritize primary target role (matchingRoles[0]) - explicit target role takes precedence
+    // 1. If candidateProfile already determined a verified canonical domain, respect it
+    if (candidateProfile?.domain && candidateProfile.domain !== "unclassified") {
+      return candidateProfile.domain;
+    }
+
     const primaryRole = (
+      selectedRole ||
+      candidateProfile?.userSelectedTargetRole ||
+      candidateProfile?.primaryRole ||
       parseResult?.matchingRoles?.[0] ||
       mlParseResult?.role_matches?.[0] ||
-      selectedRole ||
       ""
     ).toLowerCase().trim();
+
+    if (
+      primaryRole.includes("commercial practice") ||
+      primaryRole.includes("accounting") ||
+      primaryRole.includes("accountant") ||
+      primaryRole.includes("tally") ||
+      primaryRole.includes("finance") ||
+      primaryRole.includes("cost account") ||
+      primaryRole.includes("auditing") ||
+      primaryRole.includes("audit")
+    ) {
+      return "commerce";
+    }
 
     if (
       primaryRole.includes("mechanical") ||
@@ -612,125 +693,98 @@ export default function Home() {
       return "software";
     }
 
-    // 2. Secondary check across all detected roles
-    const allRoles = [
-      ...(parseResult?.matchingRoles || []),
-      ...(mlParseResult?.role_matches || []),
-      selectedRole || ""
+    const skills = [
+      ...(candidateProfile?.skills || []),
+      ...(parseResult?.skills || [])
     ].join(" ").toLowerCase();
 
-    if (allRoles.includes("mechanical")) return "mechanical";
-    if (allRoles.includes("civil") || allRoles.includes("structural engineer") || allRoles.includes("structural design")) return "civil";
-    if (allRoles.includes("electrical")) return "electrical";
-    if (allRoles.includes("machine learning") || allRoles.includes("data scientist")) return "aiml";
-    if (allRoles.includes("software") || allRoles.includes("developer") || allRoles.includes("full-stack")) return "software";
-
-    // 3. Fallback to technical skills: evaluate domain-specific technical skills
-    const skills = (parseResult?.skills || []).join(" ").toLowerCase();
-
-    // Check Mechanical skills first to ensure "Structural Analysis" in mechanical contexts is not misclassified as Civil
     if (
-      skills.includes("mechanical") ||
-      skills.includes("solidworks") ||
-      skills.includes("catia") ||
-      skills.includes("creo") ||
-      skills.includes("ansys") ||
-      skills.includes("gd&t") ||
-      skills.includes("fea") ||
-      skills.includes("finite element") ||
-      skills.includes("thermodynamics") ||
-      skills.includes("fluid dynamics") ||
-      skills.includes("matlab") ||
-      skills.includes("simulink") ||
-      skills.includes("cnc") ||
-      skills.includes("aerodynamics")
+      skills.includes("commercial practice") ||
+      skills.includes("tally") ||
+      skills.includes("accounting") ||
+      skills.includes("shorthand") ||
+      skills.includes("typing") ||
+      skills.includes("dtp") ||
+      skills.includes("cost and management")
     ) {
+      return "commerce";
+    }
+
+    if (skills.includes("mechanical") || skills.includes("solidworks") || skills.includes("catia") || skills.includes("ansys")) {
       return "mechanical";
     }
-
-    // Check Civil skills
-    if (
-      skills.includes("civil") ||
-      skills.includes("staad") ||
-      skills.includes("etabs") ||
-      skills.includes("rcc") ||
-      skills.includes("geotechnical") ||
-      skills.includes("surveying") ||
-      skills.includes("revit") ||
-      skills.includes("concrete") ||
-      skills.includes("building construction")
-    ) {
+    if (skills.includes("civil") || skills.includes("staad") || skills.includes("etabs") || skills.includes("rcc")) {
       return "civil";
     }
-
-    // Check Electrical skills
-    if (
-      skills.includes("electrical") ||
-      skills.includes("embedded") ||
-      skills.includes("vlsi") ||
-      skills.includes("pcb") ||
-      skills.includes("microcontroller") ||
-      skills.includes("verilog")
-    ) {
+    if (skills.includes("electronics") || skills.includes("embedded") || skills.includes("vlsi") || skills.includes("pcb")) {
+      return "electronics";
+    }
+    if (skills.includes("electrical") || skills.includes("power systems") || skills.includes("plc")) {
       return "electrical";
     }
-
-    // Check AI/ML skills
-    if (
-      skills.includes("machine learning") ||
-      skills.includes("pytorch") ||
-      skills.includes("tensorflow") ||
-      skills.includes("deep learning") ||
-      skills.includes("nlp") ||
-      skills.includes("computer vision")
-    ) {
+    if (skills.includes("machine learning") || skills.includes("pytorch") || skills.includes("deep learning")) {
       return "aiml";
     }
-
-    // Tools with shared domain usage (AutoCAD)
-    if (skills.includes("autocad")) {
-      if (
-        skills.includes("concrete") ||
-        skills.includes("building") ||
-        skills.includes("rcc") ||
-        skills.includes("staad") ||
-        skills.includes("etabs") ||
-        skills.includes("site")
-      ) {
-        return "civil";
-      }
-      return "mechanical";
+    if (skills.includes("react") || skills.includes("typescript") || skills.includes("node") || skills.includes("javascript")) {
+      return "software";
     }
 
-    // Structural keyword fallback: check for civil indicators vs mechanical resume context
-    if (skills.includes("structural")) {
-      if (
-        skills.includes("concrete") ||
-        skills.includes("beam") ||
-        skills.includes("bridge") ||
-        skills.includes("building") ||
-        skills.includes("foundation")
-      ) {
-        return "civil";
-      }
-      const resumeText = (resumeInput || "").toLowerCase();
-      if (
-        resumeText.includes("mechanical") ||
-        resumeText.includes("casing") ||
-        resumeText.includes("solidworks") ||
-        resumeText.includes("ansys")
-      ) {
-        return "mechanical";
-      }
-      return "civil";
-    }
-
-    return "software";
+    return candidateProfile?.domain || "unclassified";
   };
 
   // Helper: get candidate profile for LiveJobsView (returns stable canonical profile)
   const getCandidateProfile = (): CandidateProfile | undefined => {
     return candidateProfile || undefined;
+  };
+
+  // Helper: Launch adaptive interview with full candidate & job context
+  const handleLaunchInterview = (isVR = false) => {
+    const finalDomain = candidateProfile?.domain || getDomainFromProfile();
+    const finalSkills = candidateProfile?.skills?.length ? candidateProfile.skills : (parseResult?.skills || []);
+    const finalRole = selectedJobForInterview?.title || selectedRole || candidateProfile?.userSelectedTargetRole || candidateProfile?.primaryRole || "Professional";
+    const finalCompany = selectedJobForInterview?.company || selectedCompany || "Target Tech";
+
+    const explicitMode: "STANDARD" | "VR" = isVR ? "VR" : "STANDARD";
+
+    const contextPayload = {
+      candidateProfile: candidateProfile || {
+        fullName: candidateProfile?.fullName || parseResult?.candidate_name || "Candidate",
+        name: candidateProfile?.fullName || parseResult?.candidate_name || "Candidate",
+        domain: finalDomain,
+        skills: finalSkills,
+        targetRoles: candidateProfile?.targetRoles?.length ? candidateProfile.targetRoles : [finalRole],
+        experienceYears: candidateProfile?.experienceYears ?? mlParseResult?.extractedYearsExp ?? 0,
+        education: candidateProfile?.education || [],
+        experienceList: candidateProfile?.experienceList || [],
+        projects: candidateProfile?.projects || parseResult?.projects || [],
+        achievements: candidateProfile?.achievements || mlParseResult?.achievements || [],
+        rawResumeText: resumeInput || candidateProfile?.rawResumeText || ""
+      },
+      selectedJob: selectedJobForInterview ? {
+        title: selectedJobForInterview.title,
+        company: selectedJobForInterview.company,
+        description: selectedJobForInterview.description || "",
+        location: selectedJobForInterview.location || "India",
+        matchedSkills: selectedJobForInterview.matchedSkills || [],
+        missingSkills: selectedJobForInterview.missingSkills || []
+      } : {
+        title: finalRole,
+        company: finalCompany,
+        description: `${finalRole} position at ${finalCompany}`,
+        matchedSkills: finalSkills.slice(0, 4),
+        missingSkills: []
+      },
+      targetCompany: finalCompany,
+      targetRole: finalRole,
+      mode: explicitMode,
+      isVR: explicitMode === "VR"
+    };
+
+    try {
+      sessionStorage.setItem("yatranew_active_interview_context", JSON.stringify(contextPayload));
+    } catch (_) {}
+
+    navigate("/interview", { state: contextPayload });
   };
 
   // Helper: count interview questions by category
@@ -1007,83 +1061,177 @@ export default function Home() {
                   )}
                 </div>
 
-                {/* Right: Profile Detected */}
-                <div className="bg-white rounded-2xl border border-slate-200 p-8">
-                  {parseResult ? (
+                {/* Right: RESUME ANALYSIS & VERIFICATION */}
+                <div className="bg-white rounded-2xl border border-slate-200 p-6 md:p-8 shadow-sm">
+                  {candidateProfile ? (
                     <div className="space-y-5">
-                      {/* Profile Header */}
-                      <div className="flex items-start justify-between">
+                      {/* Status & Header */}
+                      <div className="flex items-start justify-between border-b border-slate-100 pb-4">
                         <div>
-                          <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 border border-emerald-200 mb-3">
+                          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 border border-emerald-200 mb-2">
                             <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
-                            <span className="text-xs font-bold text-emerald-700">Profile Detected</span>
+                            <span className="text-xs font-bold text-emerald-800 tracking-wider uppercase">RESUME ANALYSIS COMPLETE</span>
                           </div>
-                          <h3 className="text-lg font-bold text-[#0f172a]">
-                            {auth.currentUser?.displayName || "Student"}
+                          <div className="text-xs text-slate-500 font-medium">Candidate</div>
+                          <h3 className="text-xl font-extrabold text-[#0f172a]">
+                            {candidateProfile.fullName || "Not detected from resume"}
                           </h3>
                         </div>
-                        <div className="w-12 h-12 rounded-full bg-[#2563eb] flex items-center justify-center text-white font-bold text-base">
-                          {(auth.currentUser?.displayName || "S")[0].toUpperCase()}
+                        <div className="w-12 h-12 rounded-full bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center text-white font-bold text-lg shadow-sm">
+                          {((candidateProfile.fullName || "C")[0]).toUpperCase()}
                         </div>
                       </div>
 
-                      {/* Domain + Experience Badges */}
+                      {/* Domain & Metrics */}
                       <div className="flex flex-wrap gap-2">
                         <span className="px-3 py-1.5 rounded-lg bg-blue-50 border border-blue-200 text-xs font-bold text-blue-700 uppercase tracking-wider">
-                          Domain: {getDomainFromProfile().toUpperCase()}
+                          Domain: {(candidateProfile.domain || getDomainFromProfile()).toUpperCase()}
                         </span>
-                        <span className="px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-600">
-                          {mlParseResult?.extractedYearsExp || 2} yrs exp
+                        <span className="px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-700">
+                          {candidateProfile.experienceYears > 0 ? `${candidateProfile.experienceYears} yrs detected` : "Entry Level / Fresh Trainee"}
                         </span>
                         <span className="px-3 py-1.5 rounded-lg bg-emerald-50 border border-emerald-200 text-xs font-semibold text-emerald-700">
-                          {parseResult.skills?.length || 0} Verified Skills
+                          {candidateProfile.skills?.length || 0} Verified Skills
                         </span>
                       </div>
 
-                      {/* Education (from ML parser) */}
-                      {mlParseResult?.education && (
-                        <div className="flex items-center gap-2 text-xs text-[#64748b]">
-                          <BookOpen className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                          <span>{mlParseResult.education}</span>
+                      {/* Extracted Details Grid */}
+                      <div className="space-y-3 text-xs text-slate-700 bg-slate-50/80 rounded-xl p-4 border border-slate-100">
+                        {/* Education */}
+                        <div>
+                          <span className="font-bold text-slate-800 block mb-0.5">Education:</span>
+                          <span className="text-slate-600">
+                            {candidateProfile.education && candidateProfile.education.length > 0 
+                              ? candidateProfile.education.join(" • ") 
+                              : "Not detected from resume"}
+                          </span>
                         </div>
-                      )}
 
-                      {/* Top Skills */}
+                        {/* Experience & Internships */}
+                        <div>
+                          <span className="font-bold text-slate-800 block mb-0.5">Experience & Internships:</span>
+                          <span className="text-slate-600">
+                            {candidateProfile.experienceList && candidateProfile.experienceList.length > 0
+                              ? candidateProfile.experienceList.join(" | ")
+                              : (candidateProfile.experienceYears > 0 ? `${candidateProfile.experienceYears} yrs reported` : "Not detected from resume")}
+                          </span>
+                        </div>
+
+                        {/* Projects */}
+                        <div>
+                          <span className="font-bold text-slate-800 block mb-0.5">Projects:</span>
+                          <span className="text-slate-600">
+                            {candidateProfile.projects && candidateProfile.projects.length > 0
+                              ? candidateProfile.projects.join(" • ")
+                              : "Not detected from resume"}
+                          </span>
+                        </div>
+
+                        {/* Languages */}
+                        <div>
+                          <span className="font-bold text-slate-800 block mb-0.5">Languages:</span>
+                          <span className="text-slate-600">
+                            {candidateProfile.languages && candidateProfile.languages.length > 0
+                              ? candidateProfile.languages.join(", ")
+                              : "Not detected from resume"}
+                          </span>
+                        </div>
+
+                        {/* Hobbies */}
+                        <div>
+                          <span className="font-bold text-slate-800 block mb-0.5">Hobbies:</span>
+                          <span className="text-slate-600">
+                            {candidateProfile.hobbies && candidateProfile.hobbies.length > 0
+                              ? candidateProfile.hobbies.join(", ")
+                              : "Not detected from resume"}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Skills Badges */}
                       <div>
-                        <h4 className="text-xs font-bold text-[#64748b] uppercase tracking-wider mb-2">Top Skills</h4>
-                        <div className="flex flex-wrap gap-2">
-                          {(parseResult.skills || []).slice(0, 8).map((skill: string, i: number) => (
-                            <span key={i} className="px-3 py-1 rounded-lg bg-slate-50 border border-slate-200 text-xs font-medium text-[#334155]">
-                              {skill}
-                            </span>
-                          ))}
-                          {(parseResult.skills?.length || 0) > 8 && (
-                            <span className="px-3 py-1 rounded-lg bg-slate-100 text-xs text-slate-500">
-                              +{parseResult.skills.length - 8} more
-                            </span>
-                          )}
+                        <div className="flex items-center justify-between mb-2">
+                          <h4 className="text-xs font-bold text-[#64748b] uppercase tracking-wider">Skills Verified from Resume</h4>
+                          <span className="text-[11px] text-slate-400">{candidateProfile.skills?.length || 0} detected</span>
                         </div>
+                        {candidateProfile.skills && candidateProfile.skills.length > 0 ? (
+                          <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto pr-1">
+                            {candidateProfile.skills.map((skill: string, i: number) => (
+                              <span key={i} className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-xs font-medium text-[#334155] shadow-xs">
+                                {skill}
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-xs text-slate-500 italic">Not detected from resume</p>
+                        )}
                       </div>
 
-                      {/* Target Role */}
-                      <div className="bg-slate-50 border border-slate-200 rounded-xl p-4">
-                        <div className="flex items-center gap-2 mb-1">
-                          <Target className="w-4 h-4 text-blue-600" />
-                          <span className="text-xs font-bold text-[#64748b] uppercase tracking-wider">Target Role</span>
+                      {/* User-Selected Target Role (PART 5) */}
+                      <div className="bg-blue-50/60 border border-blue-100 rounded-xl p-4">
+                        <div className="flex items-center justify-between mb-1.5">
+                          <div className="flex items-center gap-1.5">
+                            <Target className="w-4 h-4 text-blue-600" />
+                            <span className="text-xs font-bold text-blue-900 uppercase tracking-wider">Target Role</span>
+                          </div>
+                          <span className="text-[10px] text-blue-600 font-semibold">User-Selected</span>
                         </div>
-                        <p className="text-sm font-bold text-[#0f172a]">
-                          {parseResult.matchingRoles?.[0] || selectedRole || "Analyzing..."}
-                        </p>
+                        
+                        {selectedRole ? (
+                          <div className="flex items-center justify-between mt-1">
+                            <p className="text-sm font-bold text-[#0f172a]">{selectedRole}</p>
+                            <button
+                              onClick={() => handleSelectTargetRole("")}
+                              className="text-xs text-blue-600 hover:text-blue-800 underline cursor-pointer"
+                            >
+                              Change
+                            </button>
+                          </div>
+                        ) : (
+                          <div>
+                            <p className="text-xs text-amber-700 font-medium mb-2">
+                              Target role not selected
+                            </p>
+                            <div className="text-[11px] text-slate-500 mb-1.5">Choose a target role or select below:</div>
+                            <div className="flex flex-wrap gap-1.5 mb-2">
+                              {(parseResult?.matchingRoles && parseResult.matchingRoles.length > 0
+                                ? parseResult.matchingRoles.slice(0, 4)
+                                : [
+                                    candidateProfile.domain === "commerce" ? "Accounts Assistant" : "Graduate Trainee",
+                                    candidateProfile.domain === "commerce" ? "Commercial Practice Associate" : "Technical Associate",
+                                    candidateProfile.domain === "commerce" ? "Audit & Accounts Executive" : "Project Assistant"
+                                  ]
+                              ).map((role: string) => (
+                                <button
+                                  key={role}
+                                  onClick={() => handleSelectTargetRole(role)}
+                                  className="px-2.5 py-1 text-xs rounded-md bg-white border border-blue-200 text-blue-700 hover:bg-blue-50 font-medium cursor-pointer transition-all"
+                                >
+                                  + {role}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                       </div>
 
-                      {/* CTA: Find Live Jobs */}
-                      <button
-                        onClick={() => setActiveTab("live-jobs")}
-                        className="w-full py-3 bg-[#2563eb] hover:bg-[#1d4ed8] text-white font-semibold text-sm rounded-xl shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.98]"
-                      >
-                        Find Live Jobs for This Role
-                        <ArrowRight className="w-4 h-4" />
-                      </button>
+                      {/* Navigation CTA */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                        <button
+                          onClick={() => setActiveTab("live-jobs")}
+                          className="py-3 px-4 bg-[#2563eb] hover:bg-[#1d4ed8] text-white font-semibold text-xs rounded-xl shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.98]"
+                        >
+                          Find Live Jobs
+                          <ArrowRight className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => setActiveTab("interview")}
+                          className="py-3 px-4 bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.98]"
+                        >
+                          Prepare Interview
+                          <ArrowRight className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
                   ) : (
                     <div className="flex flex-col items-center justify-center h-full text-center py-12">
@@ -1092,7 +1240,7 @@ export default function Home() {
                       </div>
                       <h3 className="text-base font-bold text-[#334155] mb-1">No Profile Yet</h3>
                       <p className="text-sm text-[#94a3b8] max-w-xs">
-                        Upload your resume to see your professional profile, detected skills, and target roles.
+                        Upload your resume to see your verified professional profile, detected skills, education, and experience.
                       </p>
                     </div>
                   )}
@@ -1252,7 +1400,7 @@ export default function Home() {
                       <button
                         onClick={() => {
                           if (selectedJobForInterview) {
-                            navigate("/interview");
+                            handleLaunchInterview(false);
                           }
                         }}
                         disabled={!selectedJobForInterview}
@@ -1323,7 +1471,7 @@ export default function Home() {
                         </ul>
 
                         <button
-                          onClick={() => navigate("/interview")}
+                          onClick={() => handleLaunchInterview(false)}
                           className="w-full py-3 bg-[#2563eb] hover:bg-[#1d4ed8] text-white font-semibold text-sm rounded-xl shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.98]"
                         >
                           Start Standard Interview
@@ -1359,7 +1507,7 @@ export default function Home() {
                         </ul>
 
                         <button
-                          onClick={() => navigate("/interview")}
+                          onClick={() => handleLaunchInterview(true)}
                           className="w-full py-3 bg-purple-600 hover:bg-purple-700 text-white font-semibold text-sm rounded-xl shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.98]"
                         >
                           Launch Virtual Reality Simulated Room

@@ -25,7 +25,7 @@
  * - Fully derived from live database joins
  */
 
-import { supabase, isSupabaseConfigured } from './supabase';
+import { pool, isPostgresConfigured } from './db';
 import { resolveSkillToEsco } from './escoMatcher';
 import { bridgeSkill } from './engineeringSkillBridge';
 
@@ -90,13 +90,13 @@ function getIscoProfessionalTier(iscoCode: string): { tier: string; points: numb
 }
 
 /**
- * Deterministically ranks engineering careers based on input skills.
+ * Deterministically ranks engineering careers based on input skills using PostgreSQL.
  */
 export async function rankEngineeringCareers(
   rawOrNormalizedSkills: string[],
   topLimit: number = 10
 ): Promise<CareerRankingResult> {
-  if (!isSupabaseConfigured || !Array.isArray(rawOrNormalizedSkills) || rawOrNormalizedSkills.length === 0) {
+  if (!isPostgresConfigured || !Array.isArray(rawOrNormalizedSkills) || rawOrNormalizedSkills.length === 0) {
     return {
       totalInputSkills: rawOrNormalizedSkills?.length || 0,
       totalEffectiveEscoSkills: 0,
@@ -164,21 +164,12 @@ export async function rankEngineeringCareers(
     };
   }
 
-  // 2. Query ESCO occupation-skill relations for all active concept URIs in chunks of 15
-  const URI_CHUNK_SIZE = 15;
-  let allRelations: Array<{ occupation_uri: string; skill_uri: string }> = [];
-
-  for (let i = 0; i < distinctEscoUris.length; i += URI_CHUNK_SIZE) {
-    const chunk = distinctEscoUris.slice(i, i + URI_CHUNK_SIZE);
-    const { data: relations } = await supabase
-      .from('esco_occupation_skill_relations')
-      .select('occupation_uri, skill_uri')
-      .in('skill_uri', chunk);
-
-    if (relations) {
-      allRelations.push(...relations);
-    }
-  }
+  // 2. Query ESCO occupation-skill relations from PostgreSQL for all active concept URIs
+  const relRes = await pool.query(
+    `SELECT occupation_uri, skill_uri FROM esco_occupation_skills WHERE skill_uri = ANY($1)`,
+    [distinctEscoUris]
+  );
+  const allRelations = relRes.rows;
 
   if (allRelations.length === 0) {
     return {
@@ -227,34 +218,29 @@ export async function rankEngineeringCareers(
     .slice(0, 60)
     .map(entry => entry[0]);
 
-  // 5. Query occupation metadata in safe batches of 25 to prevent HTTP 414 (URI Too Long)
-  const OCC_CHUNK_SIZE = 25;
-  const occMetadata: Array<{ id: string; concept_uri: string; preferred_label: string; code: string }> = [];
-
-  for (let i = 0; i < sortedCandidateUris.length; i += OCC_CHUNK_SIZE) {
-    const chunk = sortedCandidateUris.slice(i, i + OCC_CHUNK_SIZE);
-    const { data } = await supabase
-      .from('esco_occupations')
-      .select('id, concept_uri, preferred_label, code')
-      .in('concept_uri', chunk);
-
-    if (data) {
-      occMetadata.push(...data);
-    }
+  if (sortedCandidateUris.length === 0) {
+    return {
+      totalInputSkills: rawOrNormalizedSkills.length,
+      totalEffectiveEscoSkills: distinctEscoUris.length,
+      recommendedCareerPaths: [],
+      relatedTechnicalOccupations: []
+    };
   }
 
-  const occMetaLookup = new Map(occMetadata.map(o => [o.concept_uri, o]));
+  // 5. Query occupation metadata from PostgreSQL
+  const occRes = await pool.query(
+    `SELECT id, concept_uri, preferred_label, code FROM esco_occupations WHERE concept_uri = ANY($1)`,
+    [sortedCandidateUris]
+  );
+  const occMetadata = occRes.rows;
 
-  // 6. Pre-count exact total skills for candidate occupations in parallel
-  const occTotalSkillsMap = new Map<string, number>();
-  await Promise.all(
-    occMetadata.map(async (meta) => {
-      const { count } = await supabase
-        .from('esco_occupation_skill_relations')
-        .select('*', { count: 'exact', head: true })
-        .eq('occupation_uri', meta.concept_uri);
-      occTotalSkillsMap.set(meta.concept_uri, count || 1);
-    })
+  // 6. Pre-count exact total skills for candidate occupations in a single grouped query
+  const countsRes = await pool.query(
+    `SELECT occupation_uri, count(*) as count FROM esco_occupation_skills WHERE occupation_uri = ANY($1) GROUP BY occupation_uri`,
+    [sortedCandidateUris]
+  );
+  const occTotalSkillsMap = new Map<string, number>(
+    countsRes.rows.map(r => [r.occupation_uri, parseInt(r.count, 10)])
   );
 
   // 7. Score and format each candidate occupation
@@ -299,7 +285,7 @@ export async function rankEngineeringCareers(
     const explanation = `Matched ${directCount} direct skill(s) (${Array.from(matches.direct).join(', ') || 'none'}) and ${bridgedCount} bridged skill(s) (${Array.from(matches.bridged).join(', ') || 'none'}). Coverage: ${coveragePercentStr} (${matchedCount}/${totalRelevant} ESCO skills). Tier: ${tierInfo.tier}.`;
 
     const recommendation: CareerPathRecommendation = {
-      occupationId: meta.id,
+      occupationId: String(meta.id),
       occupationName: meta.preferred_label,
       iscoCode: meta.code,
       score: totalScore,

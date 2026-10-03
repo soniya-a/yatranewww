@@ -54,7 +54,7 @@ export interface JobMatchResult {
 
 interface CanonicalSkillDef {
   canonical: string;
-  domain: "mechanical" | "civil" | "software" | "aiml" | "electrical" | "data" | "general";
+  domain: "mechanical" | "civil" | "software" | "aiml" | "electrical" | "data" | "commerce" | "general";
   aliases: string[];
 }
 
@@ -156,7 +156,17 @@ const CANONICAL_SKILL_REGISTRY: CanonicalSkillDef[] = [
   { canonical: "Arduino", domain: "electrical", aliases: ["arduino", "raspberry pi"] },
   { canonical: "PCB Design", domain: "electrical", aliases: ["pcb design", "altium", "altium designer", "kicad", "eagle"] },
   { canonical: "PLC Programming", domain: "electrical", aliases: ["plc", "plc programming", "scada", "plc automation", "industrial automation"] },
-  { canonical: "VHDL / Verilog", domain: "electrical", aliases: ["vhdl", "verilog", "fpga", "vlsi"] }
+  { canonical: "VHDL / Verilog", domain: "electrical", aliases: ["vhdl", "verilog", "fpga", "vlsi"] },
+
+  // ── COMMERCE & FINANCIAL ACCOUNTING ───────────────────────────────────────
+  { canonical: "Tally", domain: "commerce", aliases: ["tally", "tally erp", "tally erp 9", "tally prime", "tally.erp 9"] },
+  { canonical: "Cost and Management Accounting", domain: "commerce", aliases: ["cost and management account", "cost and management accounting", "management accounting", "cost accounting"] },
+  { canonical: "Accounting & Auditing", domain: "commerce", aliases: ["accounting", "financial accounting", "auditing", "audit", "internal audit", "statutory audit", "chartered accounting"] },
+  { canonical: "DTP (Desktop Publishing)", domain: "commerce", aliases: ["dtp", "desktop publishing"] },
+  { canonical: "English Typing", domain: "commerce", aliases: ["english typing", "typing", "data entry"] },
+  { canonical: "English Shorthand", domain: "commerce", aliases: ["english shorthand", "shorthand", "stenography"] },
+  { canonical: "Commercial Practice", domain: "commerce", aliases: ["commercial practice", "secretarial practice", "office administration", "office management"] },
+  { canonical: "MS Office", domain: "general", aliases: ["basic computer knowledge", "ms office", "excel", "ms excel", "word", "powerpoint"] }
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────

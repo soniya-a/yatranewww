@@ -16,6 +16,7 @@ export type EngineeringDomain =
   | "data"
   | "software"
   | "architecture"
+  | "commerce"
   | "unclassified";
 
 export type ClassificationStatus = "verified" | "inferred" | "needs_review";
@@ -38,16 +39,38 @@ export interface CandidateAchievement {
 
 export interface CandidateProfile {
   id?: string;
+  userId?: string;
   fullName?: string;
+  email?: string;
+  phone?: string;
   rawResumeText?: string;
 
   // Domain & Role Classification (Strictly verified - never defaults to SWE)
   domain: EngineeringDomain;
   primaryRole: string | null;
   targetRoles: string[];
+  userSelectedTargetRole?: string | null;
   classificationStatus: ClassificationStatus;
   classificationConfidence: ClassificationConfidence;
   classificationNotes?: string;
+
+  // Education & Qualifications (Strictly from resume)
+  education?: string[];
+
+  // Work Experience, Internships, Articleship
+  experienceList?: string[];
+
+  // Projects
+  projects?: Array<{
+    title?: string;
+    name?: string;
+    description?: string;
+    skills?: string[];
+  }>;
+
+  // Languages & Hobbies
+  languages?: string[];
+  hobbies?: string[];
 
   // Skills
   skills: string[];

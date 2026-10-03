@@ -1,5 +1,3 @@
-import OpenAI from "openai";
-
 const TIMEOUT_MS = 15000; // 15-second bounded timeout
 
 export async function generateWithAstra(prompt: string): Promise<{ success: boolean; data?: any; error?: any; latencyMs: number }> {
@@ -12,6 +10,18 @@ export async function generateWithAstra(prompt: string): Promise<{ success: bool
       return {
         success: false,
         error: { code: "CONFIGURATION_ERROR", message: "OPENAI_API_KEY is not configured on the server." },
+        latencyMs: Date.now() - startTime
+      };
+    }
+
+    let OpenAI: any;
+    try {
+      const module = await import("openai");
+      OpenAI = module.default || module;
+    } catch {
+      return {
+        success: false,
+        error: { code: "MODULE_NOT_FOUND", message: "OpenAI package is not installed." },
         latencyMs: Date.now() - startTime
       };
     }
@@ -42,7 +52,7 @@ export async function generateWithAstra(prompt: string): Promise<{ success: bool
     if (error?.name === 'APITimeoutError' || error?.code === 'ETIMEDOUT' || error?.code === 'ECONNABORTED') {
       code = "TIMEOUT";
       message = "The request to Astra exceeded the configured timeout.";
-    } else if (error instanceof OpenAI.APIError) {
+    } else if (error?.status) {
       switch (error.status) {
         case 401:
           code = "AUTHENTICATION_ERROR";

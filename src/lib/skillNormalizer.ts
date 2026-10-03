@@ -1,4 +1,4 @@
-import { supabase, isSupabaseConfigured } from './supabase';
+import { pool, isPostgresConfigured } from './db';
 
 export type NormalizationMethod = "alias" | "exact" | "normalized_exact" | "unmatched";
 
@@ -177,26 +177,23 @@ export function normalizeKey(text: string): string {
     .replace(/\s+/g, ' ');
 }
 
-// In-memory cache for Supabase canonical taxonomy
+// In-memory cache for PostgreSQL canonical taxonomy
 let isTaxonomyLoaded = false;
 const canonicalSkillsExact = new Map<string, string>(); // lowercase -> canonical display name
 const canonicalSkillsNormalized = new Map<string, string>(); // normalizedKey -> canonical display name
 
 /**
- * Loads canonical skills taxonomy from Supabase into memory cache.
+ * Loads canonical skills taxonomy from PostgreSQL esco_skills into memory cache.
  */
 export async function loadCanonicalTaxonomy(): Promise<void> {
-  if (isTaxonomyLoaded || !isSupabaseConfigured) return;
+  if (isTaxonomyLoaded || !isPostgresConfigured) return;
 
   try {
-    const { data, error } = await supabase
-      .from('canonical_skills')
-      .select('preferred_name');
-
-    if (!error && data) {
-      for (const row of data) {
-        if (row.preferred_name && typeof row.preferred_name === 'string') {
-          const display = row.preferred_name.trim();
+    const res = await pool.query("SELECT preferred_label FROM esco_skills LIMIT 10000");
+    if (res && res.rows) {
+      for (const row of res.rows) {
+        if (row.preferred_label && typeof row.preferred_label === 'string') {
+          const display = row.preferred_label.trim();
           canonicalSkillsExact.set(display.toLowerCase(), display);
           canonicalSkillsNormalized.set(normalizeKey(display), display);
         }
@@ -226,7 +223,7 @@ export async function normalizeSkill(rawSkill: string): Promise<SkillDiagnostic>
   const normalized = normalizeKey(trimmed);
 
   // Ensure canonical taxonomy is loaded
-  if (!isTaxonomyLoaded && isSupabaseConfigured) {
+  if (!isTaxonomyLoaded && isPostgresConfigured) {
     await loadCanonicalTaxonomy();
   }
 
@@ -253,7 +250,7 @@ export async function normalizeSkill(rawSkill: string): Promise<SkillDiagnostic>
     return { raw: rawSkill, canonical, method, matchedSource: "known_alias" };
   }
 
-  // 2. Check Supabase canonical_skills taxonomy
+  // 2. Check canonical skills taxonomy
   if (canonicalSkillsExact.has(lower)) {
     const canonical = canonicalSkillsExact.get(lower)!;
     const method: NormalizationMethod = trimmed === canonical ? "exact" : "normalized_exact";
@@ -265,17 +262,16 @@ export async function normalizeSkill(rawSkill: string): Promise<SkillDiagnostic>
     return { raw: rawSkill, canonical, method: "normalized_exact", matchedSource: "canonical_skills" };
   }
 
-  // 3. Check Supabase public.esco_skills table (exact case-insensitive match)
-  if (isSupabaseConfigured) {
+  // 3. Check PostgreSQL public.esco_skills table (exact case-insensitive match)
+  if (isPostgresConfigured) {
     try {
-      const { data: escoMatch } = await supabase
-        .from('esco_skills')
-        .select('preferred_label')
-        .ilike('preferred_label', trimmed)
-        .limit(1);
+      const res = await pool.query(
+        "SELECT preferred_label FROM esco_skills WHERE LOWER(preferred_label) = LOWER($1) LIMIT 1",
+        [trimmed]
+      );
 
-      if (escoMatch && escoMatch.length > 0 && escoMatch[0].preferred_label) {
-        const canonical = escoMatch[0].preferred_label.trim();
+      if (res.rows.length > 0 && res.rows[0].preferred_label) {
+        const canonical = res.rows[0].preferred_label.trim();
         const method: NormalizationMethod = trimmed === canonical ? "exact" : "normalized_exact";
         return { raw: rawSkill, canonical, method, matchedSource: "esco_skills" };
       }

@@ -4,12 +4,17 @@ export const VRScene = memo(({
   cameraZ,
   selectedInterviewer,
   avatarState,
-  company = "Google",
-  role = "Web Developer Intern",
+  company,
+  targetCompany,
+  role,
+  targetRole,
   round = 1,
 }: any) => {
   const sceneRef = useRef<HTMLDivElement>(null);
   const [sceneHTML, setSceneHTML] = useState('');
+
+  const finalCompany = company || targetCompany || "Subek Agarwal & Associates";
+  const finalRole = role || targetRole || "Accounts Assistant";
 
   useEffect(() => {
     // If we need to dynamically update camera or models, we can do it via DOM API here
@@ -49,10 +54,10 @@ export const VRScene = memo(({
     const subtitleText = document.getElementById('screen-subtitle-text');
     const roundText = document.getElementById('screen-round-text');
     
-    if (titleText) titleText.setAttribute('value', 'InterviewVerse');
-    if (subtitleText) subtitleText.setAttribute('value', `${company} · ${role}`);
-    if (roundText) roundText.setAttribute('value', `Self Introduction · Round ${round}`);
-  }, [company, role, round]);
+    if (titleText) titleText.setAttribute('value', 'Newyatra AI');
+    if (subtitleText) subtitleText.setAttribute('value', `${finalCompany} · ${finalRole}`);
+    if (roundText) roundText.setAttribute('value', `Interview Round ${round}`);
+  }, [finalCompany, finalRole, round]);
 
   // Set scene HTML once to avoid re-mounting a-scene
   useEffect(() => {
@@ -94,9 +99,9 @@ export const VRScene = memo(({
         <a-plane position="0 2.0 -4.09" width="3.3" height="1.7" color="#0f172a" material="shader: flat; opacity: 0.98"></a-plane>
         
         <!-- Screen Text -->
-        <a-text id="screen-title-text" value="InterviewVerse" position="-1.5 2.5 -4.08" color="#f8fafc" scale="0.6 0.6 0.6" font="mozillavr"></a-text>
-        <a-text id="screen-subtitle-text" value="Google · Web Developer Intern" position="-1.5 2.1 -4.08" color="#94a3b8" scale="0.4 0.4 0.4"></a-text>
-        <a-text id="screen-round-text" value="Self Introduction · Round 1" position="-1.5 1.8 -4.08" color="#38bdf8" scale="0.35 0.35 0.35"></a-text>
+        <a-text id="screen-title-text" value="Newyatra AI" position="-1.5 2.5 -4.08" color="#f8fafc" scale="0.6 0.6 0.6" font="mozillavr"></a-text>
+        <a-text id="screen-subtitle-text" value="${finalCompany} · ${finalRole}" position="-1.5 2.1 -4.08" color="#94a3b8" scale="0.4 0.4 0.4"></a-text>
+        <a-text id="screen-round-text" value="Interview Round ${round}" position="-1.5 1.8 -4.08" color="#38bdf8" scale="0.35 0.35 0.35"></a-text>
 
         <!-- Left Wall Window (Glass Architecture) -->
         <!-- Glass Pane -->

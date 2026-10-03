@@ -1,3 +1,5 @@
+
+
 /**
  * PHASE 2: LIVE JOB MATCHING INTEGRATION
  * 
@@ -38,6 +40,10 @@ export interface LiveJobMatchResult {
  * Strictly respects engineering domain and never forces a software engineering role.
  */
 export function determinePrimaryTargetRole(candidate: CandidateProfile): string {
+  if (candidate?.userSelectedTargetRole && candidate.userSelectedTargetRole.trim().length > 0) {
+    return candidate.userSelectedTargetRole.trim();
+  }
+
   if (candidate?.primaryRole && candidate.primaryRole.trim().length > 0) {
     return candidate.primaryRole.trim();
   }
@@ -49,6 +55,8 @@ export function determinePrimaryTargetRole(candidate: CandidateProfile): string 
 
   const dom = (candidate?.domain || "").toLowerCase().trim();
   switch (dom) {
+    case "commerce":
+      return "Accounts / Commercial Practice Associate";
     case "mechanical":
       return "Mechanical Engineer";
     case "civil":
@@ -65,7 +73,7 @@ export function determinePrimaryTargetRole(candidate: CandidateProfile): string 
     case "software":
       return "Software Engineer";
     default:
-      return "Graduate Engineer Trainee";
+      return "Graduate Trainee";
   }
 }
 
