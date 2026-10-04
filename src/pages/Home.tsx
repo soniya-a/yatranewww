@@ -14,6 +14,8 @@ import { supabase } from "../lib/supabase";
 import { LiveJobsView } from "../components/LiveJobsView";
 import { CandidateProfile } from "../types/candidateProfile";
 import { buildCanonicalProfile } from "../lib/profile/candidateProfileBuilder";
+import { ResumeIntelligenceDashboard } from "../components/ResumeIntelligenceDashboard";
+import { ResumeIntelligenceData } from "../lib/resume/resumeSchema";
 
 // ── Interfaces (preserved exactly from original) ──────────────────────────────
 
@@ -359,8 +361,47 @@ export default function Home() {
         }
       };
       reader.readAsDataURL(file);
+    } else if (['png', 'jpg', 'jpeg', 'webp'].includes(ext || '')) {
+      setIsParsingResume(true);
+      setParseError(null);
+      setAiThinkingStep(1);
+      setAiThinkingProgress("Performing OCR on resume image...");
+
+      const reader = new FileReader();
+      reader.onload = async (event) => {
+        try {
+          const base64 = event.target?.result as string;
+          const { token } = await getAuthContext();
+
+          const extractRes = await fetch("/api/resume/extract-image", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${token}`
+            },
+            body: JSON.stringify({ imageBase64: base64, filename: file.name })
+          });
+
+          const extractData = await extractRes.json();
+          if (!extractRes.ok || !extractData.success || !extractData.text) {
+            setParseError(extractData.error?.message || "Could not read text from this image.");
+            setIsParsingResume(false);
+            setAiThinkingStep(0);
+            return;
+          }
+          const extractedText = extractData.text;
+          setResumeInput(extractedText);
+          setParseError(null);
+          handleParseResume(extractedText);
+        } catch (err: any) {
+          setIsParsingResume(false);
+          setAiThinkingStep(0);
+          setParseError("Image OCR processing failed. Please try again or upload a PDF/DOCX.");
+        }
+      };
+      reader.readAsDataURL(file);
     } else {
-      setParseError("Unsupported file format. Please upload a PDF (.pdf), Word document (.docx), or plain text (.txt).");
+      setParseError("Unsupported file format. Please upload a PDF (.pdf), Word document (.docx), plain text (.txt), or image (.png, .jpg).");
     }
   };
 
@@ -945,7 +986,7 @@ export default function Home() {
         type="file"
         ref={fileInputRef}
         className="hidden"
-        accept=".txt,.md,.pdf,.doc,.docx"
+        accept=".txt,.md,.pdf,.doc,.docx,.png,.jpg,.jpeg,.webp"
         onChange={handleFileChange}
       />
 
@@ -1057,9 +1098,9 @@ export default function Home() {
                 <p className="text-sm text-[#64748b] mt-1">Upload your resume and let YATRA understand your professional profile.</p>
               </div>
 
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+              <div className={`grid grid-cols-1 ${parseResult ? 'lg:grid-cols-12' : 'lg:grid-cols-2'} gap-8`}>
                 {/* Left: Upload Dropzone */}
-                <div className="bg-white rounded-2xl border border-slate-200 p-8 flex flex-col items-center justify-center text-center">
+                <div className={`bg-white rounded-2xl border border-slate-200 p-8 flex flex-col items-center justify-center text-center ${parseResult ? 'lg:col-span-4' : ''}`}>
                   <div
                     onDragOver={handleDragOver}
                     onDragLeave={handleDragLeave}
@@ -1088,7 +1129,7 @@ export default function Home() {
                           <Upload className="w-7 h-7 text-blue-600" />
                         </div>
                         <p className="text-sm font-semibold text-[#334155] mb-1">Drop your resume here or click to upload</p>
-                        <p className="text-xs text-[#94a3b8]">PDF • DOCX (Max 10MB)</p>
+                        <p className="text-xs text-[#94a3b8]">PDF • DOCX • Image (Max 10MB)</p>
                       </>
                     )}
                   </div>
@@ -1115,95 +1156,49 @@ export default function Home() {
                   )}
                 </div>
 
-                {/* Right: Profile Detected */}
-                <div className="bg-white rounded-2xl border border-slate-200 p-8">
-                  {parseResult ? (
-                    <div className="space-y-5">
-                      {/* Profile Header */}
-                      <div className="flex items-start justify-between">
-                        <div>
-                          <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 border border-emerald-200 mb-3">
-                            <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
-                            <span className="text-xs font-bold text-emerald-700">Profile Detected</span>
-                          </div>
-                          <h3 className="text-lg font-bold text-[#0f172a]">
-                            {userName}
-                          </h3>
-                        </div>
-                        <div className="w-12 h-12 rounded-full bg-[#2563eb] flex items-center justify-center text-white font-bold text-base">
-                          {(userName || "S")[0].toUpperCase()}
-                        </div>
-                      </div>
+                {/* Right: Dynamic Resume Intelligence Dashboard */}
+                <div className={`${parseResult ? 'lg:col-span-8' : ''}`}>
+                  {(() => {
+                    const resumeIntelligencePayload: ResumeIntelligenceData | null = parseResult ? {
+                      profile: parseResult.profile || {
+                        name: parseResult.candidate_name || candidateProfile?.fullName || null,
+                        headline: parseResult.headline || candidateProfile?.primaryRole || null,
+                        location: candidateProfile?.contact?.location || null,
+                        email: candidateProfile?.contact?.email || null,
+                        phone: candidateProfile?.contact?.phone || null,
+                        linkedin: candidateProfile?.contact?.linkedin || null,
+                        github: candidateProfile?.contact?.github || null,
+                        portfolio: candidateProfile?.contact?.portfolio || null
+                      },
+                      skills: Array.isArray(parseResult.structuredSkills)
+                        ? parseResult.structuredSkills
+                        : (parseResult.skills || []).map((s: string) => ({ name: s, category: "Verified Skills", evidence: s, confidence: 0.95 })),
+                      experience: Array.isArray(parseResult.experience) ? parseResult.experience : [],
+                      education: Array.isArray(parseResult.education) ? parseResult.education : [],
+                      projects: Array.isArray(parseResult.projects) ? parseResult.projects : [],
+                      certifications: Array.isArray(parseResult.certifications) ? parseResult.certifications : [],
+                      achievements: Array.isArray(parseResult.achievements) ? parseResult.achievements : []
+                    } : null;
 
-                      {/* Domain + Experience Badges */}
-                      <div className="flex flex-wrap gap-2">
-                        <span className="px-3 py-1.5 rounded-lg bg-blue-50 border border-blue-200 text-xs font-bold text-blue-700 uppercase tracking-wider">
-                          Domain: {getDomainFromProfile().toUpperCase()}
-                        </span>
-                        <span className="px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-600">
-                          {mlParseResult?.extractedYearsExp || 2} yrs exp
-                        </span>
-                        <span className="px-3 py-1.5 rounded-lg bg-emerald-50 border border-emerald-200 text-xs font-semibold text-emerald-700">
-                          {parseResult.skills?.length || 0} Verified Skills
-                        </span>
-                      </div>
-
-                      {/* Education (from ML parser) */}
-                      {mlParseResult?.education && (
-                        <div className="flex items-center gap-2 text-xs text-[#64748b]">
-                          <BookOpen className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                          <span>{mlParseResult.education}</span>
-                        </div>
-                      )}
-
-                      {/* Top Skills */}
-                      <div>
-                        <h4 className="text-xs font-bold text-[#64748b] uppercase tracking-wider mb-2">Top Skills</h4>
-                        <div className="flex flex-wrap gap-2">
-                          {(parseResult.skills || []).slice(0, 8).map((skill: string, i: number) => (
-                            <span key={i} className="px-3 py-1 rounded-lg bg-slate-50 border border-slate-200 text-xs font-medium text-[#334155]">
-                              {skill}
-                            </span>
-                          ))}
-                          {(parseResult.skills?.length || 0) > 8 && (
-                            <span className="px-3 py-1 rounded-lg bg-slate-100 text-xs text-slate-500">
-                              +{parseResult.skills.length - 8} more
-                            </span>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Target Role */}
-                      <div className="bg-slate-50 border border-slate-200 rounded-xl p-4">
-                        <div className="flex items-center gap-2 mb-1">
-                          <Target className="w-4 h-4 text-blue-600" />
-                          <span className="text-xs font-bold text-[#64748b] uppercase tracking-wider">Target Role</span>
-                        </div>
-                        <p className="text-sm font-bold text-[#0f172a]">
-                          {parseResult.matchingRoles?.[0] || selectedRole || "Analyzing..."}
-                        </p>
-                      </div>
-
-                      {/* CTA: Find Live Jobs */}
-                      <button
-                        onClick={() => setActiveTab("live-jobs")}
-                        className="w-full py-3 bg-[#2563eb] hover:bg-[#1d4ed8] text-white font-semibold text-sm rounded-xl shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.98]"
-                      >
-                        Find Live Jobs for This Role
-                        <ArrowRight className="w-4 h-4" />
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="flex flex-col items-center justify-center h-full text-center py-12">
-                      <div className="w-16 h-16 rounded-2xl bg-slate-50 border border-slate-200 flex items-center justify-center mb-4">
-                        <FileText className="w-7 h-7 text-slate-300" />
-                      </div>
-                      <h3 className="text-base font-bold text-[#334155] mb-1">No Profile Yet</h3>
-                      <p className="text-sm text-[#94a3b8] max-w-xs">
-                        Upload your resume to see your professional profile, detected skills, and target roles.
-                      </p>
-                    </div>
-                  )}
+                    return (
+                      <ResumeIntelligenceDashboard
+                        data={resumeIntelligencePayload}
+                        isLoading={isParsingResume}
+                        parseError={parseError}
+                        onRetry={() => {
+                          if (resumeInput) handleParseResume(resumeInput);
+                          else handleFileClick();
+                        }}
+                        onFindJobs={() => setActiveTab("live-jobs")}
+                        onPrepareInterview={() => {
+                          handlePrepareInterview({
+                            title: parseResult?.matchingRoles?.[0] || selectedRole || "Professional",
+                            company: parseResult?.matchingCompanies?.[0]?.company || selectedCompany || "Company"
+                          });
+                        }}
+                      />
+                    );
+                  })()}
                 </div>
               </div>
             </motion.div>

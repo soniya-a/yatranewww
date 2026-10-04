@@ -16,6 +16,8 @@ import { generateJobInterviewSession } from "./src/lib/interview/jobInterviewEng
 import { generateWithAstra } from "./src/lib/ai/openaiProvider";
 import { generateInterviewQuestions } from "./src/engine/questionEngine";
 import mammoth from "mammoth";
+import { ResumeIntelligenceSchema } from "./src/lib/resume/resumeSchema";
+import { performOcrOnImageBuffer } from "./src/lib/resume/ocrFallback";
 const firebaseConfigPath = path.join(process.cwd(), "firebase-applet-config.json");
 let firebaseConfig: any = {};
 if (fs.existsSync(firebaseConfigPath)) {
@@ -635,9 +637,41 @@ function getFallbackResumeDetails(resumeText: string) {
     topCompany: matchResult.companies[0]?.company
   });
 
+  // Extract contact info if present without hallucination
+  const emailMatch = resumeText.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+  const phoneMatch = resumeText.match(/(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/);
+  const linkedinMatch = resumeText.match(/linkedin\.com\/in\/[a-zA-Z0-9_-]+/i);
+  const githubMatch = resumeText.match(/github\.com\/[a-zA-Z0-9_-]+/i);
+
+  const profile = {
+    name: candidateName || null,
+    headline: allRoles[0] || null,
+    location: null,
+    email: emailMatch ? emailMatch[0] : null,
+    phone: phoneMatch ? phoneMatch[0] : null,
+    linkedin: linkedinMatch ? linkedinMatch[0] : null,
+    github: githubMatch ? githubMatch[0] : null,
+    portfolio: null
+  };
+
+  const structuredSkills = verifiedSkills.map(s => ({
+    name: s,
+    category: "Verified Skills",
+    evidence: s,
+    confidence: 0.95
+  }));
+
   return {
     candidate_name: candidateName,
+    headline: allRoles[0] || null,
+    profile,
     skills: verifiedSkills,
+    structuredSkills,
+    experience: [],
+    education: [],
+    projects: [],
+    certifications: [],
+    achievements: [],
     matchingRoles: allRoles,
     matchingCompanies: matchResult.companies.slice(0, 6).map(c => ({
       company: c.company,
@@ -1547,6 +1581,63 @@ Return ONLY this structured JSON matching this schema:
     }
   });
 
+  // ── Image Resume OCR Extraction ──────────────────────────────────────────
+  app.post("/api/resume/extract-image", authenticate, async (req, res) => {
+    const filename = req.body?.filename || "unknown";
+
+    try {
+      const { imageBase64 } = req.body;
+      if (!imageBase64 || typeof imageBase64 !== "string") {
+        return res.status(400).json({
+          success: false,
+          error: {
+            code: "IMAGE_PAYLOAD_MISSING",
+            message: "Image base64 data payload is required."
+          }
+        });
+      }
+
+      let cleanBase64 = imageBase64.trim();
+      const commaIdx = cleanBase64.indexOf(",");
+      if (cleanBase64.startsWith("data:") && commaIdx !== -1) {
+        cleanBase64 = cleanBase64.substring(commaIdx + 1);
+      } else if (commaIdx !== -1 && cleanBase64.slice(0, commaIdx).toLowerCase().includes("base64")) {
+        cleanBase64 = cleanBase64.substring(commaIdx + 1);
+      }
+      cleanBase64 = cleanBase64.replace(/\s+/g, "");
+
+      const buffer = Buffer.from(cleanBase64, "base64");
+      const { text, confidence } = await performOcrOnImageBuffer(buffer);
+
+      if (!text || text.length < 20) {
+        return res.status(422).json({
+          success: false,
+          error: {
+            code: "OCR_EMPTY_TEXT",
+            message: "Could not detect clear text from this image. Please ensure the image is clear and well-lit."
+          }
+        });
+      }
+
+      return res.json({
+        success: true,
+        text,
+        charCount: text.length,
+        format: "ocr_image",
+        confidence
+      });
+    } catch (err: any) {
+      console.error("[Image OCR Error]", { filename, error: err?.message || String(err) });
+      return res.status(500).json({
+        success: false,
+        error: {
+          code: "OCR_EXTRACTION_FAILED",
+          message: err?.message || "Failed to process image OCR."
+        }
+      });
+    }
+  });
+
   app.post("/api/resume/parse", authenticate, async (req, res) => {
     const { resumeText } = req.body;
     if (!resumeText) {
@@ -1562,17 +1653,18 @@ Return ONLY this structured JSON matching this schema:
       }
 
       _stage = "gemini_model_call";
-      const prompt = `TASK: COMPREHENSIVE_RESUME_PARSER_EXTRACTOR
+      const prompt = `TASK: PRODUCTION_RESUME_INTELLIGENCE_PARSER
 
-You are an expert resume parsing engine.
-Analyze the following resume text and extract complete, comprehensive, and accurate structured data.
+You are an expert resume parsing engine adhering to strict anti-hallucination standards.
+Analyze the following resume text and extract structured data.
 
-INSTRUCTIONS:
-1. Extract EVERY single technical skill, programming language, framework, library, tool, database, cloud provider, infrastructure tool, protocol, architectural concept, and engineering competency mentioned anywhere in the resume.
-2. The "skills" field must be the authoritative collection containing ALL detected skills across all sections (Technical Skills, Summary, Experience, Projects, Internships, Education, Certifications).
-3. Do NOT limit, cap, or truncate the skills array. Extract all of them.
-4. Do NOT hallucinate or invent skills not present in the text.
-5. Extract project details, work experience, internships, education, and links accurately.
+CRITICAL RULES:
+1. NEVER invent or hallucinate information. If a field is not stated in the resume, return null (or empty array).
+2. Extract the candidate's exact contact details (email, phone, location, linkedin, github, portfolio).
+3. The "skills" array must contain all technical skills, tools, frameworks, and domain competencies mentioned.
+   For each skill, include literal "evidence" quote from the resume where it appeared.
+4. Extract work experience, internships, education (degree, institution, dates, grade), projects, certifications, and achievements.
+5. Do NOT guess or default candidate roles to software if the candidate is in civil, mechanical, commerce, or other fields.
 
 Return ONLY valid JSON adhering to the schema.
 
@@ -1587,10 +1679,35 @@ ${resumeText.substring(0, 16000)}`;
           responseSchema: {
             type: Type.OBJECT,
             properties: {
+              profile: {
+                type: Type.OBJECT,
+                properties: {
+                  name: { type: Type.STRING },
+                  headline: { type: Type.STRING },
+                  location: { type: Type.STRING },
+                  email: { type: Type.STRING },
+                  phone: { type: Type.STRING },
+                  linkedin: { type: Type.STRING },
+                  github: { type: Type.STRING },
+                  portfolio: { type: Type.STRING }
+                }
+              },
               candidate_name: { type: Type.STRING },
               headline: { type: Type.STRING },
               summary: { type: Type.STRING },
-              skills: { type: Type.ARRAY, items: { type: Type.STRING } },
+              skills: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    name: { type: Type.STRING },
+                    category: { type: Type.STRING },
+                    evidence: { type: Type.STRING },
+                    confidence: { type: Type.NUMBER }
+                  },
+                  required: ["name"]
+                }
+              },
               tools_and_technologies: { type: Type.ARRAY, items: { type: Type.STRING } },
               projects: {
                 type: Type.ARRAY,
@@ -1599,10 +1716,11 @@ ${resumeText.substring(0, 16000)}`;
                   properties: {
                     name: { type: Type.STRING },
                     description: { type: Type.STRING },
-                    skills_used: { type: Type.ARRAY, items: { type: Type.STRING } },
-                    tools_used: { type: Type.ARRAY, items: { type: Type.STRING } },
-                    outcome: { type: Type.STRING }
-                  }
+                    technologies: { type: Type.ARRAY, items: { type: Type.STRING } },
+                    links: { type: Type.STRING },
+                    evidence: { type: Type.STRING }
+                  },
+                  required: ["name"]
                 }
               },
               experience: {
@@ -1610,36 +1728,57 @@ ${resumeText.substring(0, 16000)}`;
                 items: {
                   type: Type.OBJECT,
                   properties: {
+                    job_title: { type: Type.STRING },
                     company: { type: Type.STRING },
-                    role: { type: Type.STRING },
-                    date_range: { type: Type.STRING },
+                    location: { type: Type.STRING },
+                    start_date: { type: Type.STRING },
+                    end_date: { type: Type.STRING },
                     description: { type: Type.STRING },
-                    skills_used: { type: Type.ARRAY, items: { type: Type.STRING } }
-                  }
+                    technologies: { type: Type.ARRAY, items: { type: Type.STRING } },
+                    evidence: { type: Type.STRING }
+                  },
+                  required: ["job_title", "company"]
                 }
               },
-              internships: {
+              education: {
                 type: Type.ARRAY,
                 items: {
                   type: Type.OBJECT,
                   properties: {
-                    company: { type: Type.STRING },
-                    role: { type: Type.STRING },
-                    date_range: { type: Type.STRING },
-                    description: { type: Type.STRING },
-                    skills_used: { type: Type.ARRAY, items: { type: Type.STRING } }
-                  }
+                    degree: { type: Type.STRING },
+                    field: { type: Type.STRING },
+                    institution: { type: Type.STRING },
+                    start_date: { type: Type.STRING },
+                    end_date: { type: Type.STRING },
+                    grade: { type: Type.STRING }
+                  },
+                  required: ["degree", "institution"]
                 }
               },
-              education: { type: Type.ARRAY, items: { type: Type.STRING } },
-              certifications: { type: Type.ARRAY, items: { type: Type.STRING } },
-              achievements: { type: Type.ARRAY, items: { type: Type.STRING } },
-              languages: { type: Type.ARRAY, items: { type: Type.STRING } },
-              links: { type: Type.ARRAY, items: { type: Type.STRING } },
-              keywords: { type: Type.ARRAY, items: { type: Type.STRING } },
-              missing_or_unclear_fields: { type: Type.ARRAY, items: { type: Type.STRING } }
-            },
-            required: ["skills"]
+              certifications: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    name: { type: Type.STRING },
+                    issuer: { type: Type.STRING },
+                    date: { type: Type.STRING }
+                  },
+                  required: ["name"]
+                }
+              },
+              achievements: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    title: { type: Type.STRING },
+                    description: { type: Type.STRING }
+                  },
+                  required: ["title"]
+                }
+              }
+            }
           }
         }
       }));
@@ -1651,35 +1790,30 @@ ${resumeText.substring(0, 16000)}`;
         cleanedText = cleanedText.replace(/^```(json)?/i, "").replace(/```$/, "").trim();
       }
 
-      let parsedData;
+      let parsedData: any;
       try {
         parsedData = JSON.parse(cleanedText);
       } catch (e) {
-        // Very basic attempt to close string/array/object if truncated
         const fix = cleanedText + "]}";
         parsedData = JSON.parse(fix);
       }
 
       _stage = "skill_extraction";
-      // Safe array extraction helper
       const getArraySafe = (arr: any): any[] => Array.isArray(arr) ? arr : [];
 
-      // Combine all skills from all parsed sub-sections into a complete deduplicated authoritative list
-      const rawSkills = getArraySafe(parsedData?.skills);
+      // Extract skills ensuring backwards compatibility with string array consumers
+      const rawSkillEntries = getArraySafe(parsedData?.skills);
       const rawTools = getArraySafe(parsedData?.tools_and_technologies);
-      const projectSkills = getArraySafe(parsedData?.projects).flatMap((p: any) => [
-        ...getArraySafe(p?.skills_used),
-        ...getArraySafe(p?.tools_used)
-      ]);
-      const experienceSkills = getArraySafe(parsedData?.experience).flatMap((e: any) => getArraySafe(e?.skills_used));
-      const internshipSkills = getArraySafe(parsedData?.internships).flatMap((i: any) => getArraySafe(i?.skills_used));
+      const projectSkills = getArraySafe(parsedData?.projects).flatMap((p: any) => getArraySafe(p?.technologies));
+      const expSkills = getArraySafe(parsedData?.experience).flatMap((e: any) => getArraySafe(e?.technologies));
 
       const combinedSkillsSet = new Set<string>();
       const authoritativeSkills: string[] = [];
 
-      for (const skill of [...rawSkills, ...rawTools, ...projectSkills, ...experienceSkills, ...internshipSkills]) {
-        if (typeof skill === 'string' && skill.trim().length > 0) {
-          const cleaned = skill.trim();
+      for (const item of [...rawSkillEntries, ...rawTools, ...projectSkills, ...expSkills]) {
+        const skillStr = typeof item === 'string' ? item : item?.name;
+        if (typeof skillStr === 'string' && skillStr.trim().length > 0) {
+          const cleaned = skillStr.trim();
           const lower = cleaned.toLowerCase();
           if (!combinedSkillsSet.has(lower)) {
             combinedSkillsSet.add(lower);
@@ -1689,9 +1823,8 @@ ${resumeText.substring(0, 16000)}`;
       }
 
       _stage = "company_matching";
-      let matchingCompanies: any[] = [];
       const matchResult = matchResumeToRegistry(resumeText);
-      matchingCompanies = matchResult.companies.slice(0, 3).map(c => ({
+      const matchingCompanies = matchResult.companies.slice(0, 3).map(c => ({
         company: c.company,
         role: c.role,
         matchScore: c.matchScore,
@@ -1699,32 +1832,74 @@ ${resumeText.substring(0, 16000)}`;
       }));
 
       _stage = "role_inference";
-      // Infer matchingRoles based on experience, internships or fallback
       let matchingRoles: string[] = [];
-      const internships = getArraySafe(parsedData?.internships);
-      const experience = getArraySafe(parsedData?.experience);
-      const combinedRoles = [...experience, ...internships];
-
-      if (combinedRoles.length > 0) {
-        matchingRoles = combinedRoles
-          .map((i: any) => i?.role || i?.title)
+      const experienceList = getArraySafe(parsedData?.experience);
+      if (experienceList.length > 0) {
+        matchingRoles = experienceList
+          .map((i: any) => i?.job_title || i?.role)
           .filter((role: any) => typeof role === "string" && role.trim().length > 0);
       }
-
-      // If no past roles were found in resume, try to deduce from Gemini's parsing or fallback
       if (matchingRoles.length === 0) {
         matchingRoles = matchingCompanies.map(c => c.role);
       }
 
       _stage = "skill_normalization";
-      // Deterministic Skill Normalization
       const normalizedResult = await normalizeSkills(authoritativeSkills);
+
+      _stage = "schema_validation";
+      // Construct candidate contact and profile
+      const rawProfile = parsedData?.profile || {};
+      const candidateProfileHeader = {
+        name: rawProfile.name || parsedData?.candidate_name || null,
+        headline: rawProfile.headline || parsedData?.headline || (matchingRoles[0] || null),
+        location: rawProfile.location || null,
+        email: rawProfile.email || null,
+        phone: rawProfile.phone || null,
+        linkedin: rawProfile.linkedin || null,
+        github: rawProfile.github || null,
+        portfolio: rawProfile.portfolio || null
+      };
+
+      const structuredSkills = rawSkillEntries.map((s: any) => {
+        if (typeof s === 'string') {
+          return { name: s, category: null, evidence: s, confidence: 0.9 };
+        }
+        return {
+          name: s.name,
+          category: s.category || null,
+          evidence: s.evidence || s.name,
+          confidence: typeof s.confidence === 'number' ? s.confidence : 0.9
+        };
+      });
+
+      const intelligenceCandidate = {
+        profile: candidateProfileHeader,
+        skills: structuredSkills,
+        experience: getArraySafe(parsedData?.experience),
+        education: getArraySafe(parsedData?.education),
+        projects: getArraySafe(parsedData?.projects),
+        certifications: getArraySafe(parsedData?.certifications),
+        achievements: getArraySafe(parsedData?.achievements)
+      };
+
+      // Validate through Zod to guarantee contract
+      const zodValidation = ResumeIntelligenceSchema.safeParse(intelligenceCandidate);
+      const validatedIntelligence = zodValidation.success ? zodValidation.data : intelligenceCandidate;
 
       _stage = "response_construction";
       const adaptedData = {
         ...parsedData,
+        profile: validatedIntelligence.profile,
+        candidate_name: validatedIntelligence.profile.name || parsedData?.candidate_name || null,
+        headline: validatedIntelligence.profile.headline || parsedData?.headline || null,
         rawSkills: authoritativeSkills,
         skills: normalizedResult.normalizedSkills,
+        structuredSkills: validatedIntelligence.skills,
+        experience: validatedIntelligence.experience,
+        education: validatedIntelligence.education,
+        projects: validatedIntelligence.projects,
+        certifications: validatedIntelligence.certifications,
+        achievements: validatedIntelligence.achievements,
         normalizedSkills: normalizedResult.normalizedSkills,
         unmatchedSkills: normalizedResult.unmatchedSkills,
         normalizationDiagnostics: normalizedResult.normalizationDiagnostics,

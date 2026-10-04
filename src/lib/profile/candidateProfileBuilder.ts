@@ -270,19 +270,21 @@ export function buildCanonicalProfile(
   rawResumeText: string
 ): CandidateProfile {
   // Extract all available raw and normalized skills
-  const rawSkills: string[] = Array.isArray(parseResult?.skills) ? parseResult.skills : [];
+  const rawSkills: any[] = Array.isArray(parseResult?.skills) ? parseResult.skills : [];
   const mlSkills: any[] = Array.isArray(mlParseResult?.technical_skills) ? mlParseResult.technical_skills : [];
   
   const skillNameSet = new Set<string>();
   const technicalSkills: CandidateSkill[] = [];
 
   for (const s of rawSkills) {
-    if (typeof s === "string" && s.trim().length > 0) {
-      const clean = s.trim();
+    const skillName = typeof s === "string" ? s : (s && typeof s === "object" ? s.name : undefined);
+    const category = s && typeof s === "object" ? s.category : undefined;
+    if (typeof skillName === "string" && skillName.trim().length > 0) {
+      const clean = skillName.trim();
       const lower = clean.toLowerCase();
       if (!skillNameSet.has(lower)) {
         skillNameSet.add(lower);
-        technicalSkills.push({ name: clean });
+        technicalSkills.push({ name: clean, category });
       }
     }
   }
@@ -354,9 +356,21 @@ export function buildCanonicalProfile(
 
   // Extract candidate full name
   const extractedName =
+    parseResult?.profile?.name ||
     parseResult?.candidate_name ||
     mlParseResult?.candidate_name ||
     extractCandidateName(rawResumeText);
+
+  // Extract contact info if present
+  const profileHeader = parseResult?.profile;
+  const contact = profileHeader ? {
+    location: profileHeader.location || null,
+    email: profileHeader.email || null,
+    phone: profileHeader.phone || null,
+    linkedin: profileHeader.linkedin || null,
+    github: profileHeader.github || null,
+    portfolio: profileHeader.portfolio || null
+  } : undefined;
 
   return {
     fullName: extractedName,
@@ -376,6 +390,13 @@ export function buildCanonicalProfile(
     experienceYears: expYears,
     experienceLevel: expLevel,
     achievements,
+    headline: profileHeader?.headline || parseResult?.headline || null,
+    contact,
+    educationRecords: Array.isArray(parseResult?.education) ? parseResult.education : undefined,
+    experienceRecords: Array.isArray(parseResult?.experience) ? parseResult.experience : undefined,
+    projects: Array.isArray(parseResult?.projects) ? parseResult.projects : undefined,
+    certifications: Array.isArray(parseResult?.certifications) ? parseResult.certifications : undefined,
+    parsedResumeIntelligence: parseResult?.profile ? parseResult : undefined,
     updatedAt: new Date().toISOString(),
     source: "resume_upload"
   };

@@ -58,6 +58,48 @@ export interface CandidateProfile {
   experienceLevel?: "Entry" | "Junior" | "Mid" | "Senior" | "Lead";
   achievements?: CandidateAchievement[];
 
+  // Extended Resume Intelligence Fields (100% backward compatible)
+  headline?: string | null;
+  contact?: {
+    location?: string | null;
+    email?: string | null;
+    phone?: string | null;
+    linkedin?: string | null;
+    github?: string | null;
+    portfolio?: string | null;
+  };
+  educationRecords?: {
+    degree: string;
+    field?: string | null;
+    institution: string;
+    start_date?: string | null;
+    end_date?: string | null;
+    grade?: string | null;
+  }[];
+  experienceRecords?: {
+    job_title: string;
+    company: string;
+    location?: string | null;
+    start_date?: string | null;
+    end_date?: string | null;
+    description?: string | null;
+    technologies?: string[];
+    evidence?: string | null;
+  }[];
+  projects?: {
+    name: string;
+    description?: string | null;
+    technologies?: string[];
+    links?: string | null;
+    evidence?: string | null;
+  }[];
+  certifications?: {
+    name: string;
+    issuer?: string | null;
+    date?: string | null;
+  }[];
+  parsedResumeIntelligence?: any;
+
   // Metadata
   updatedAt: string;
   source: "resume_upload" | "manual_entry" | "inferred";

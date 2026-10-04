@@ -2,6 +2,7 @@ import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
 import path from 'path';
 import fs from 'fs';
 import { pathToFileURL } from 'url';
+import { reorderPageItemsColumnAware } from './resume/columnDetector';
 
 export interface PDFExtractionResult {
   text: string;
@@ -77,20 +78,14 @@ export async function extractTextFromPDF(dataBuffer: Buffer | Uint8Array | Array
       continue;
     }
 
-    // Sort items by Y descending (top to bottom), then by X ascending (left to right)
-    items.sort((a, b) => {
-      const yDiff = b.y - a.y;
-      if (Math.abs(yDiff) > 3) {
-        return yDiff; // Higher Y first (top of page)
-      }
-      return a.x - b.x; // Lower X first (left to right)
-    });
+    // Apply column-aware reordering (detects 2-column or sidebar layouts)
+    const sortedItems = reorderPageItemsColumnAware(items);
 
     let pageText = '';
     let lastY: number | null = null;
     let lastXEnd: number | null = null;
 
-    for (const item of items) {
+    for (const item of sortedItems) {
       const { str, x, y, width } = item;
 
       if (lastY === null) {
