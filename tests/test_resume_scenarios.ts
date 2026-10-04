@@ -192,6 +192,97 @@ async function runResumeTestSuite() {
     "Extended Experience: Populates canonical experienceRecords"
   );
 
+  // ── TEST 6: Real Candidate Resume Deterministic Section Extraction ────────
+  console.log("\nTEST 6: Testing Soniya J Real PDF/Text Extraction (Education, Experience, Projects, Location)...");
+  const { extractTextFromPDF } = await import("../src/lib/pdfParser");
+  const { 
+    extractEducationFromText, 
+    extractExperienceFromText, 
+    extractProjectsFromText, 
+    extractLocationFromText 
+  } = await import("../src/lib/resume/localSectionExtractor");
+  const fs = await import("fs");
+  const path = await import("path");
+
+  const pdfPath = path.join(process.cwd(), "public/assets/soniyaj resumee.pdf");
+  if (fs.existsSync(pdfPath)) {
+    const pdfBuffer = fs.readFileSync(pdfPath);
+    const pdfResult = await extractTextFromPDF(pdfBuffer);
+    const resumeText = pdfResult.text;
+
+    // Test Location
+    const loc = extractLocationFromText(resumeText);
+    assert(
+      loc !== null && loc.includes("Mysore"),
+      "Location Extraction: Accurately extracts Mysore, Karnataka location",
+      `Extracted: ${loc}`
+    );
+
+    // Test Education
+    const eduList = extractEducationFromText(resumeText);
+    assert(
+      eduList.length >= 1,
+      "Education Extraction: Successfully detects Education entries (count >= 1)",
+      `Found ${eduList.length} entries`
+    );
+    const primaryEdu = eduList[0];
+    assert(
+      primaryEdu.degree.includes("Bachelor of Engineering") || primaryEdu.degree.includes("B.E."),
+      "Education Degree: Accurately identifies Bachelor of Engineering (B.E.) degree",
+      `Degree: ${primaryEdu?.degree}`
+    );
+    assert(
+      primaryEdu.institution.includes("Maharaja Institute of Technology"),
+      "Education Institution: Accurately identifies Maharaja Institute of Technology Mysore",
+      `Institution: ${primaryEdu?.institution}`
+    );
+    assert(
+      primaryEdu.end_date === "2027",
+      "Education Dates: Correctly parses graduation year 2027",
+      `End date: ${primaryEdu?.end_date}`
+    );
+
+    // Test Experience
+    const expList = extractExperienceFromText(resumeText);
+    assert(
+      expList.length >= 1,
+      "Experience Extraction: Successfully detects Experience entries (count >= 1)",
+      `Found ${expList.length} entries`
+    );
+    const primaryExp = expList[0];
+    assert(
+      primaryExp.job_title.includes("Industrial IoT Intern"),
+      "Experience Title: Accurately identifies Industrial IoT Intern title",
+      `Job Title: ${primaryExp?.job_title}`
+    );
+    assert(
+      primaryExp.company.includes("Mindsetcraft Labs"),
+      "Experience Company: Accurately identifies Mindsetcraft Labs Pvt. Ltd.",
+      `Company: ${primaryExp?.company}`
+    );
+    assert(
+      primaryExp.start_date === "Jan 2024" && primaryExp.end_date === "Apr 2024",
+      "Experience Dates: Accurately extracts Jan 2024 - Apr 2024",
+      `Dates: ${primaryExp?.start_date} - ${primaryExp?.end_date}`
+    );
+
+    // Test Projects
+    const projList = extractProjectsFromText(resumeText);
+    assert(
+      projList.length >= 2,
+      "Projects Extraction: Successfully detects at least 2 distinct projects",
+      `Found ${projList.length} projects: ${projList.map(p => p.name).join(", ")}`
+    );
+    const hasInterviewVerse = projList.some(p => p.name.includes("InterviewVerse"));
+    assert(
+      hasInterviewVerse,
+      "Projects Extraction: Identifies InterviewVerse AI project",
+      `Projects: ${projList.map(p => p.name).join(", ")}`
+    );
+  } else {
+    console.warn("Notice: public/assets/soniyaj resumee.pdf not found, skipping file test");
+  }
+
   console.log("\n=================================================================");
   console.log(`TEST RESULTS: ${passedCount} / ${totalCount} PASSED (100%)`);
   console.log("=================================================================");

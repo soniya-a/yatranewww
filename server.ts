@@ -18,6 +18,12 @@ import { generateInterviewQuestions } from "./src/engine/questionEngine";
 import mammoth from "mammoth";
 import { ResumeIntelligenceSchema } from "./src/lib/resume/resumeSchema";
 import { performOcrOnImageBuffer } from "./src/lib/resume/ocrFallback";
+import { 
+  extractEducationFromText, 
+  extractExperienceFromText, 
+  extractProjectsFromText, 
+  extractLocationFromText 
+} from "./src/lib/resume/localSectionExtractor";
 const firebaseConfigPath = path.join(process.cwd(), "firebase-applet-config.json");
 let firebaseConfig: any = {};
 if (fs.existsSync(firebaseConfigPath)) {
@@ -612,8 +618,20 @@ function getFallbackResumeDetails(resumeText: string) {
   // NEVER invents skills not present in the text
   const verifiedSkills = extractVerifiedSkillsFromText(resumeText);
 
+  // Extract sections deterministically from resume text
+  const education = extractEducationFromText(resumeText);
+  const experience = extractExperienceFromText(resumeText);
+  const projects = extractProjectsFromText(resumeText);
+  const detectedLocation = extractLocationFromText(resumeText);
+
   // Candidate title detection for top matching role
   const candidateRoles: string[] = [];
+  for (const exp of experience) {
+    if (exp.job_title && !candidateRoles.includes(exp.job_title)) {
+      candidateRoles.push(exp.job_title);
+    }
+  }
+
   if (norm.includes("electrical engineer") || norm.includes("eee")) candidateRoles.push("Electrical Engineer");
   else if (norm.includes("mechanical design engineer")) candidateRoles.push("Mechanical Design Engineer");
   else if (norm.includes("mechanical engineer")) candidateRoles.push("Mechanical Engineer");
@@ -631,8 +649,12 @@ function getFallbackResumeDetails(resumeText: string) {
   console.info("[Resume Fallback Diagnostics]", {
     candidateName,
     detectedDomain: matchResult.matchedCategory,
+    location: detectedLocation,
     verifiedSkillCount: verifiedSkills.length,
     skills: verifiedSkills,
+    educationCount: education.length,
+    experienceCount: experience.length,
+    projectsCount: projects.length,
     topRoles: allRoles.slice(0, 4),
     topCompany: matchResult.companies[0]?.company
   });
@@ -646,7 +668,7 @@ function getFallbackResumeDetails(resumeText: string) {
   const profile = {
     name: candidateName || null,
     headline: allRoles[0] || null,
-    location: null,
+    location: detectedLocation || null,
     email: emailMatch ? emailMatch[0] : null,
     phone: phoneMatch ? phoneMatch[0] : null,
     linkedin: linkedinMatch ? linkedinMatch[0] : null,
@@ -667,9 +689,9 @@ function getFallbackResumeDetails(resumeText: string) {
     profile,
     skills: verifiedSkills,
     structuredSkills,
-    experience: [],
-    education: [],
-    projects: [],
+    experience,
+    education,
+    projects,
     certifications: [],
     achievements: [],
     matchingRoles: allRoles,
@@ -1872,12 +1894,26 @@ ${resumeText.substring(0, 16000)}`;
         };
       });
 
+      // If Gemini missed education, experience, or projects, fill in from deterministic local parser
+      const extractedEdu = getArraySafe(parsedData?.education);
+      const finalEdu = extractedEdu.length > 0 ? extractedEdu : extractEducationFromText(resumeText);
+
+      const extractedExp = getArraySafe(parsedData?.experience);
+      const finalExp = extractedExp.length > 0 ? extractedExp : extractExperienceFromText(resumeText);
+
+      const extractedProj = getArraySafe(parsedData?.projects);
+      const finalProj = extractedProj.length > 0 ? extractedProj : extractProjectsFromText(resumeText);
+
+      if (!candidateProfileHeader.location) {
+        candidateProfileHeader.location = extractLocationFromText(resumeText);
+      }
+
       const intelligenceCandidate = {
         profile: candidateProfileHeader,
         skills: structuredSkills,
-        experience: getArraySafe(parsedData?.experience),
-        education: getArraySafe(parsedData?.education),
-        projects: getArraySafe(parsedData?.projects),
+        experience: finalExp,
+        education: finalEdu,
+        projects: finalProj,
         certifications: getArraySafe(parsedData?.certifications),
         achievements: getArraySafe(parsedData?.achievements)
       };
@@ -1910,30 +1946,21 @@ ${resumeText.substring(0, 16000)}`;
 
       res.json(adaptedData);
     } catch (error: any) {
-      const isGeminiUnavailable = checkIsQuotaError(error) ||
-        (error?.message || "").includes("CIRCUIT_BREAKER_ACTIVE") ||
-        (error?.message || "").includes("RATE_LIMITED_FALLBACK") ||
-        (error?.message || "").includes("not found") ||
-        (error?.message || "").includes("404");
-
       console.error("[Resume Parse Error]", {
         stage: _stage,
         errorName: error?.name,
         errorMessage: error?.message,
-        isGeminiUnavailable,
         httpStatus: error?.status || error?.statusCode || error?.code,
         stackTop: error?.stack?.split("\n").slice(0, 6).join(" | ")
       });
 
-      if (isGeminiUnavailable) {
-        // Gemini is quota-limited or circuit-broken: fall back to local keyword parser
-        console.info("[Resume Parse] Gemini unavailable — using local keyword fallback parser.");
-        try {
-          const fallbackResumeData = getFallbackResumeDetails(req.body.resumeText || "");
-          return res.json(fallbackResumeData);
-        } catch (fbErr: any) {
-          console.error("[Resume Parse] Fallback parser also failed:", fbErr?.message);
-        }
+      // Always fall back to robust local deterministic parser on any error
+      console.info("[Resume Parse] Falling back to robust local deterministic resume parser.");
+      try {
+        const fallbackResumeData = getFallbackResumeDetails(req.body.resumeText || "");
+        return res.json(fallbackResumeData);
+      } catch (fbErr: any) {
+        console.error("[Resume Parse] Fallback parser also failed:", fbErr?.message);
       }
 
       res.status(500).json({
