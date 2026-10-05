@@ -347,8 +347,36 @@ const GlobalNetworkGrid = () => {
 };
 
 export default function App() {
-  const [user, setUser] = useState<AppUser | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [user, setUser] = useState<AppUser | null>(() => {
+    if (typeof window === "undefined") return null;
+    const guestSession = localStorage.getItem("guest_session");
+    const uid = localStorage.getItem("guest_uid") || "guest-user-123";
+    const email = localStorage.getItem("guest_email") || "soniya@yatra.ai";
+    const name = localStorage.getItem("guest_name") || "Soniya";
+
+    if (guestSession !== "false") {
+      if (!guestSession) {
+        localStorage.setItem("guest_session", "true");
+        localStorage.setItem("guest_uid", uid);
+        localStorage.setItem("guest_email", email);
+        localStorage.setItem("guest_name", name);
+      }
+      const payload = { user_id: uid };
+      const payloadB64 = btoa(JSON.stringify(payload))
+        .replace(/=/g, "")
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_");
+
+      return {
+        uid,
+        email,
+        displayName: name,
+        getIdToken: async () => `header.${payloadB64}.signature`
+      };
+    }
+    return null;
+  });
+  const [loading, setLoading] = useState(false);
 
   // Authentication states
   const [isLoggingIn, setIsLoggingIn] = useState(false);
@@ -407,8 +435,10 @@ export default function App() {
   };
 
   useEffect(() => {
-    // 1. Initial check for existing Supabase session or Guest session
+    let isMounted = true;
+    // 1. Initial check for existing Supabase session or upgrade
     supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!isMounted) return;
       if (session?.user) {
         setUser({
           uid: session.user.id,
@@ -416,34 +446,20 @@ export default function App() {
           displayName: session.user.user_metadata?.full_name || session.user.email?.split("@")[0] || "User",
           getIdToken: async () => session.access_token
         });
-        setLoading(false);
-      } else if (localStorage.getItem("guest_session") === "true") {
-        const uid = localStorage.getItem("guest_uid") || "guest-user-123";
-        const email = localStorage.getItem("guest_email") || "soniya@yatra.ai";
-        const name = localStorage.getItem("guest_name") || "Soniya";
-        const payload = { user_id: uid };
-        const payloadB64 = btoa(JSON.stringify(payload))
-          .replace(/=/g, "")
-          .replace(/\+/g, "-")
-          .replace(/\//g, "_");
-
-        setUser({
-          uid,
-          email,
-          displayName: name,
-          getIdToken: async () => `header.${payloadB64}.signature`
-        });
-        setLoading(false);
-      } else {
-        setUser(null);
-        setLoading(false);
       }
-    }).catch(() => {
       setLoading(false);
+    }).catch(() => {
+      if (isMounted) setLoading(false);
     });
 
-    // 2. Real-time auth changes listener
+    // 2. Safety timeout ensuring loading never hangs on portal initialization
+    const safetyTimer = setTimeout(() => {
+      if (isMounted) setLoading(false);
+    }, 300);
+
+    // 3. Real-time auth changes listener
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!isMounted) return;
       if (session?.user) {
         setUser({
           uid: session.user.id,
@@ -451,12 +467,14 @@ export default function App() {
           displayName: session.user.user_metadata?.full_name || session.user.email?.split("@")[0] || "User",
           getIdToken: async () => session.access_token
         });
-      } else if (!localStorage.getItem("guest_session")) {
+      } else if (localStorage.getItem("guest_session") !== "true") {
         setUser(null);
       }
     });
 
     return () => {
+      isMounted = false;
+      clearTimeout(safetyTimer);
       subscription.unsubscribe();
     };
   }, []);

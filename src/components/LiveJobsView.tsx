@@ -39,9 +39,10 @@ interface SearchResponse {
 export interface LiveJobsViewProps {
   candidateProfile?: CandidateProfile;
   onPrepareInterview?: (job: EnrichedJob) => void;
+  onDirectInterview?: (job: EnrichedJob) => void;
 }
 
-export const LiveJobsView: React.FC<LiveJobsViewProps> = ({ candidateProfile, onPrepareInterview }) => {
+export const LiveJobsView: React.FC<LiveJobsViewProps> = ({ candidateProfile, onPrepareInterview, onDirectInterview }) => {
   // Infer initial role query if candidate profile is present
   const defaultQuery = useMemo(() => {
     if (candidateProfile) {
@@ -641,10 +642,21 @@ export const LiveJobsView: React.FC<LiveJobsViewProps> = ({ candidateProfile, on
                   </div>
 
                   <div className="flex items-center gap-2">
+                    {onDirectInterview && (
+                      <button
+                        onClick={() => onDirectInterview(job)}
+                        className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-zinc-950 font-bold text-xs transition-all shadow-sm hover:shadow cursor-pointer active:scale-95"
+                        title="Start interview directly with this job's requirements and canonical questions"
+                      >
+                        <Sparkles className="w-3.5 h-3.5 text-zinc-950" />
+                        Direct Interview
+                      </button>
+                    )}
+
                     {onPrepareInterview && (
                       <button
                         onClick={() => onPrepareInterview(job)}
-                        className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs transition-all shadow-sm hover:shadow cursor-pointer active:scale-95"
+                        className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs transition-all shadow-sm hover:shadow cursor-pointer active:scale-95"
                       >
                         Prepare Interview
                       </button>

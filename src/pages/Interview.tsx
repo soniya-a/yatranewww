@@ -1,10 +1,24 @@
 // @ts-nocheck
 import { useEffect, useState, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { ArrowLeft, Mic, MicOff, Clock, Send, Loader2, Award, ClipboardCheck, Sparkles, Check, CheckCircle, ChevronRight, BookOpen, AlertCircle, Sun, Volume2, ZoomIn, ZoomOut, Smartphone, Layers } from 'lucide-react';
+import { ArrowLeft, Mic, MicOff, Clock, Send, Loader2, Award, ClipboardCheck, Sparkles, Check, CheckCircle, ChevronRight, BookOpen, AlertCircle, Sun, Volume2, ZoomIn, ZoomOut, Smartphone, Layers, Radio } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { supabase } from '../lib/supabase';
 import { VRScene } from "../components/VRScene";
+import { GeminiLiveClient } from '../lib/geminiLiveClient';
+import { 
+  retrieveActiveInterviewContext, 
+  persistActiveInterviewContext, 
+  purgeLegacyUnscopedKeys 
+} from '../lib/interview/interviewContext';
+import { InterviewHeader } from '../components/interview/InterviewHeader';
+import { AIInterviewerCard } from '../components/interview/AIInterviewerCard';
+import { CanonicalQuestionCard } from '../components/interview/CanonicalQuestionCard';
+import { AITranscriptCard } from '../components/interview/AITranscriptCard';
+import { CandidateTranscriptCard } from '../components/interview/CandidateTranscriptCard';
+import { VoiceControls } from '../components/interview/VoiceControls';
+import { QuestionQueue } from '../components/interview/QuestionQueue';
+import { BehaviorObserver, BehaviorLog } from '../lib/interview/behaviorObserver';
 
 // Register a custom A-Frame component to bend bones & perfectly seat typical readyplayer.me standing avatars.
 if (typeof window !== 'undefined') {
@@ -635,32 +649,64 @@ const INTERVIEW_MODES = [
 export default function Interview() {
   const navigate = useNavigate();
   const location = useLocation();
-  const state = location.state || {};
-  const companyData = state.companyData || "- Company: Niya AI\n- Role: Software Engineer\n- Focus: System Design";
-  const candidateSkills = state.candidateSkills || "React, TypeScript, Python, SQL";
 
-  // Parse company and role from metadata context into reactive states
-  const [targetCompany, setTargetCompany] = useState(() => {
-    try {
-      const comLine = companyData.split('\n').find(l => l.includes('- Company:'));
-      return comLine ? comLine.replace('- Company:', '').trim() : "Niya AI";
-    } catch (e) {
-      return "Niya AI";
-    }
+  // 1. First, parse URL search parameters
+  const queryParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : new URLSearchParams();
+  const queryJobId = queryParams.get('jobId') || '';
+  const querySetId = queryParams.get('setId') || '';
+  const queryCompany = queryParams.get('company') || '';
+  const queryRole = queryParams.get('role') || '';
+  const queryVR = queryParams.get('vr');
+
+  // 2. React Router location state
+  const state = (location.state || {}) as any;
+
+  // 3. Fallback to scoped storage if needed
+  const scopedContext = retrieveActiveInterviewContext(queryJobId || state.jobId || null);
+
+  // 4. Resolve exact Job Context with zero hardcoded TCS / Software Engineer fallbacks
+  const targetJobId = queryJobId || state.jobId || scopedContext?.jobId || '';
+  const targetCompany = (queryCompany || state.company || scopedContext?.company || '').trim();
+  const targetRole = (queryRole || state.role || scopedContext?.role || '').trim();
+  const targetJobDescription = state.jobDescription || scopedContext?.jobDescription || '';
+  const candidateSkills = state.candidateSkills || scopedContext?.candidateSkills || 'React, TypeScript, Python, SQL';
+
+  // Canonical InterviewQuestionSet ID
+  const [activeSetId, setActiveSetId] = useState<string>(() => {
+    return querySetId || state.setId || scopedContext?.setId || '';
   });
 
-  const [targetRole, setTargetRole] = useState(() => {
-    try {
-      const roleLine = companyData.split('\n').find(l => l.includes('- Role:'));
-      return roleLine ? roleLine.replace('- Role:', '').trim() : "Software Engineer";
-    } catch (e) {
-      return "Software Engineer";
-    }
+  // VR Mode: Strictly false unless explicitly requested as true in URL or state
+  const [isVRActive, setIsVRActive] = useState<boolean>(() => {
+    if (queryVR === 'true') return true;
+    if (queryVR === 'false') return false;
+    if (state.isVR !== undefined) return Boolean(state.isVR);
+    if (scopedContext?.isVR !== undefined) return Boolean(scopedContext.isVR);
+    return false;
   });
+
+  // Track session ID for persistence across reloads
+  const [sessionId, setSessionId] = useState<string>(() => {
+    const querySessionId = queryParams.get('sessionId');
+    return querySessionId || '';
+  });
+
+  // Lifecycle state management: LOADING | READY | ERROR | NO_CONTEXT
+  const [interviewState, setInterviewState] = useState<'LOADING' | 'READY' | 'ERROR' | 'NO_CONTEXT'>(() => {
+    if (!targetCompany && !targetRole && !activeSetId && !querySetId && !state.setId && !scopedContext?.setId) {
+      return 'NO_CONTEXT';
+    }
+    return 'LOADING';
+  });
+  const [errorMessage, setErrorMessage] = useState<string>('');
+
+  useEffect(() => {
+    purgeLegacyUnscopedKeys();
+  }, []);
 
   // Determine active company configuration mode on boot
   const [currentMode, setCurrentMode] = useState(() => {
-    const comp = (targetCompany || "Niya AI").toLowerCase();
+    const comp = (targetCompany || '').toLowerCase();
     const found = INTERVIEW_MODES.find(m => comp.includes(m.id) || m.company.toLowerCase().includes(comp));
     return found || INTERVIEW_MODES[0];
   });
@@ -683,35 +729,35 @@ export default function Interview() {
 
   const [mentorAdvice, setMentorAdvice] = useState("Excellent posture! Documenting key performance vectors on screen.");
   const [recapMessage, setRecapMessage] = useState("");
-  const [isVRActive, setIsVRActive] = useState(() => typeof window !== 'undefined' && !!(window as any).AFRAME);
 
   useEffect(() => {
-    const checkVR = () => {
-      if (typeof window !== 'undefined' && (window as any).AFRAME) {
-        setIsVRActive(true);
-        if (typeof (window as any).registerSeatedAvatar === 'function') {
-          try {
-            
-          } catch (e) {
-            console.warn("[Newyatra AI] Avatar registration retry failed:", e);
+    if (isVRActive) {
+      const checkVR = () => {
+        if (typeof window !== 'undefined' && (window as any).AFRAME) {
+          if (typeof (window as any).registerSeatedAvatar === 'function') {
+            try {
+              (window as any).registerSeatedAvatar();
+            } catch (e) {
+              console.warn("[Newyatra AI] Avatar registration retry failed:", e);
+            }
           }
+          return true;
         }
-        return true;
-      }
-      return false;
-    };
+        return false;
+      };
 
-    if (!checkVR()) {
-      let count = 0;
-      const interval = setInterval(() => {
-        count++;
-        if (checkVR() || count > 15) {
-          clearInterval(interval);
-        }
-      }, 500);
-      return () => clearInterval(interval);
+      if (!checkVR()) {
+        let count = 0;
+        const interval = setInterval(() => {
+          count++;
+          if (checkVR() || count > 15) {
+            clearInterval(interval);
+          }
+        }, 500);
+        return () => clearInterval(interval);
+      }
     }
-  }, []);
+  }, [isVRActive]);
 
   // Adaptive user performance/score memory logic
   useEffect(() => {
@@ -856,6 +902,9 @@ export default function Interview() {
 
   // Interview Multi-Round State Engine
   const [selectedInterviewer, setSelectedInterviewer] = useState(INTERVIEWERS[0]);
+  const [geminiLiveClient, setGeminiLiveClient] = useState<GeminiLiveClient | null>(null);
+  const [isListeningSTT, setIsListeningSTT] = useState(false);
+  const recognitionRef = useRef<any>(null);
   const [currentRoundIndex, setCurrentRoundIndex] = useState(0);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   
@@ -866,11 +915,98 @@ export default function Interview() {
   const [questions, setQuestions] = useState<any[]>([]);
   const [loadingQuestions, setLoadingQuestions] = useState(false);
   const [answers, setAnswers] = useState<Record<string, string>>({}); // structure: { "roundIdx_questionIdx": answerString }
+  const [codeAnswers, setCodeAnswers] = useState<Record<string, string>>({});
   
   const [isMicOn, setIsMicOn] = useState(false);
+  const isMicOnRef = useRef(false);
+  const [liveInterimTranscript, setLiveInterimTranscript] = useState('');
+  const [liveFinalTranscript, setLiveFinalTranscript] = useState('');
   const [timeLeft, setTimeLeft] = useState(45 * 60); // 45 minute total timer
   const [cameraZ, setCameraZ] = useState(1.5);
   const [showTips, setShowTips] = useState(true);
+
+  // Live Camera state for candidate webcam auto-start
+  const [isCameraOn, setIsCameraOn] = useState(false);
+  const [activeStream, setActiveStream] = useState<MediaStream | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+
+  // Behavior Observation
+  const [behaviorLogs, setBehaviorLogs] = useState<BehaviorLog[]>([]);
+  const behaviorObserverRef = useRef<BehaviorObserver | null>(null);
+
+  useEffect(() => {
+    behaviorObserverRef.current = new BehaviorObserver((log) => {
+      setBehaviorLogs((prev) => [...prev, log]);
+      console.log("[Behavior Observation]", log);
+    });
+    behaviorObserverRef.current.initialize();
+    
+    return () => {
+      behaviorObserverRef.current?.stopObserving();
+    };
+  }, []);
+
+  useEffect(() => {
+    let stream: MediaStream | null = null;
+    const startCamera = async () => {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        setActiveStream(stream);
+        setIsCameraOn(true);
+      } catch (err) {
+        console.warn("Camera access failed or denied:", err);
+        setIsCameraOn(false);
+      }
+    };
+    startCamera();
+    return () => {
+      if (stream) {
+        stream.getTracks().forEach(t => t.stop());
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (isCameraOn && activeStream && videoRef.current) {
+      videoRef.current.srcObject = activeStream;
+      // Start behavioral observation
+      if (behaviorObserverRef.current) {
+        behaviorObserverRef.current.startObserving(videoRef.current);
+      }
+    }
+  }, [isCameraOn, activeStream]);
+
+  const toggleCamera = () => {};
+
+  const handleToggleSpeaking = () => {
+    if (isSpeaking) {
+      if (geminiLiveClient) geminiLiveClient.stopAudio();
+      setIsSpeaking(false);
+      setAvatarState('idle');
+    } else {
+      const activeQ = questions[currentQuestionIndex];
+      if (activeQ) {
+        const qText = activeQ.question_text || activeQ.question;
+        speakText(qText);
+      }
+    }
+  };
+
+  const handleSelectQuestion = (idx: number) => {
+    if (idx >= 0 && idx < questions.length) {
+      setCurrentQuestionIndex(idx);
+      const targetQ = questions[idx];
+      const targetQText = targetQ.question_text || targetQ.question;
+      setAiSpeech(targetQText);
+      speakText(targetQText);
+    }
+  };
+
+  const handleEndInterview = () => {
+    if (window.confirm("Do you want to conclude the interview and view your evaluation report?")) {
+      handleGenerateEvaluationReport();
+    }
+  };
 
   const handleZoomIn = () => {
     setCameraZ((prev) => Math.max(-1.0, prev - 0.4));
@@ -1049,7 +1185,7 @@ export default function Interview() {
 
   // Increment waiting timer every second if the interviewer is NOT speaking, is not generating or loading questions, and a valid question is active
   useEffect(() => {
-    if (isSpeaking || loadingQuestions || isGenerating || currentQuestionIndex >= 8) {
+    if (isSpeaking || loadingQuestions || isGenerating || (questions.length > 0 && currentQuestionIndex >= questions.length)) {
       return;
     }
     
@@ -1099,96 +1235,323 @@ export default function Interview() {
   const [pendingFollowUp, setPendingFollowUp] = useState<string | null>(null);
   const [askedFollowUp, setAskedFollowUp] = useState(false);
 
-  // Fetch or compile questions for a specific round index with optional parameters overrides
-  const fetchRoundQuestions = async (roundIdx: number, overrideCompany?: string, overrideRole?: string) => {
-    setLoadingQuestions(true);
-    const activeRound = ROUNDS[roundIdx];
-    const compToUse = overrideCompany || targetCompany;
-    const roleToUse = overrideRole || targetRole;
+  useEffect(() => {
+    let client: GeminiLiveClient | null = null;
+    const initGemini = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        const uid = session?.user?.id || localStorage.getItem("guest_uid") || "guest-user-123";
+        const token = session?.access_token || (() => {
+          const payload = { user_id: uid };
+          const payloadB64 = btoa(JSON.stringify(payload)).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+          return `header.${payloadB64}.signature`;
+        })();
+
+        const res = await fetch('/api/interview/live-token', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          }
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          if (data.token) {
+            client = new GeminiLiveClient({
+              token: data.token,
+              model: data.model,
+              endpoint: data.endpoint
+            });
+            await client.connect();
+            client.onSpeakingChange = (speaking) => {
+              setIsSpeaking(speaking);
+              setAvatarState(speaking ? 'speaking' : 'idle');
+            };
+            client.onTurnComplete = (text) => {
+              try {
+                const match = text.match(/\{[\s\S]*"transcript"\s*:\s*"([^"]+)"[\s\S]*\}/i);
+                if (match && match[1]) {
+                  const transcript = match[1].trim();
+                  setLiveFinalTranscript((prev) => (prev ? prev.trim() + ' ' : '') + transcript);
+                  setInputText((prev) => (prev ? prev.trim() + ' ' : '') + transcript);
+                }
+              } catch (e) {
+                console.warn("[GeminiLive] Failed to parse transcript from turn:", text);
+              }
+            };
+            setGeminiLiveClient(client);
+            console.log("[GeminiLive] Connected with ephemeral token!");
+          }
+        }
+      } catch (e) {
+        console.warn("[GeminiLive] Ephemeral token init deferred:", e);
+      }
+    };
+    initGemini();
+    return () => {
+      client?.cleanup();
+    };
+  }, []);
+  // Synchronize ref for continuous speech recognition lifecycle
+  useEffect(() => {
+    isMicOnRef.current = isMicOn;
+  }, [isMicOn]);
+
+  const isSpeakingRef = useRef(false);
+  useEffect(() => {
+    isSpeakingRef.current = isSpeaking;
+  }, [isSpeaking]);
+
+  const toggleListen = () => {
+    setIsMicOn(prev => !prev);
+  };
+
+  // Continuous Candidate Microphone Stream via GeminiLiveClient
+  useEffect(() => {
+    if (isMicOn) {
+      setIsListeningSTT(true);
+      if (geminiLiveClient && geminiLiveClient.isConnected()) {
+        geminiLiveClient.startMicrophone().catch(err => {
+          console.warn("[GeminiLive] Failed to start microphone:", err);
+          setIsMicOn(false);
+          setIsListeningSTT(false);
+        });
+      }
+    } else {
+      if (geminiLiveClient) {
+        geminiLiveClient.stopMicrophone();
+      }
+      setIsListeningSTT(false);
+    }
+
+    return () => {
+      if (geminiLiveClient) {
+        geminiLiveClient.stopMicrophone();
+      }
+    };
+  }, [isMicOn, geminiLiveClient]);
+
+  // Persist session progress to server and local cache (scoped strictly to activeSetId)
+  const persistSessionProgress = async (
+    qId: string,
+    qOrder: number,
+    updatedAnswers: Record<string, string>,
+    isCompleted: boolean = false
+  ) => {
+    const currentSetId = activeSetId;
+    const currentSessId = sessionId || `SES_${Date.now()}`;
     
-    // Clear keyboard input states
-    setInputText("");
-    
+    const payload = {
+      session_id: currentSessId,
+      question_set_id: currentSetId,
+      current_question_id: qId,
+      current_question_order: qOrder,
+      answers: updatedAnswers,
+      code_answers: codeAnswers,
+      behavior_logs: behaviorLogs,
+      is_completed: isCompleted
+    };
+
+    if (typeof window !== 'undefined' && currentSetId) {
+      localStorage.setItem(`interview_session_${currentSetId}`, JSON.stringify(payload));
+    }
+
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token || (() => {
-        const payload = { user_id: "guest-user-123" };
-        const payloadB64 = btoa(JSON.stringify(payload))
-          .replace(/=/g, "")
-          .replace(/\+/g, "-")
-          .replace(/\//g, "_");
-        return `header.${payloadB64}.signature`;
-      })();
- 
-      const res = await fetch('/api/interview/generate-questions', {
+      await fetch('/api/interview/session/save', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          roundType: activeRound.key,
-          role: roleToUse,
-          company: compToUse,
-          candidateSkills: candidateSkills
-        })
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
       });
- 
-      if (!res.ok) {
-        throw new Error("HTTP error: " + res.status);
-      }
- 
-      const data = await res.json();
-      const loadedQuestions = Array.isArray(data) ? data : (data.questions || []);
-      setQuestions(loadedQuestions);
-      setCurrentQuestionIndex(0);
- 
-      // Trigger first question spoken by avatar (only of seated or subsequent rounds)
-      if (loadedQuestions.length > 0) {
-        const firstQ = loadedQuestions[0];
-        setAiSpeech(firstQ.question);
-        
-        // Skip calling speech synthesize if they are still performing entrance walk-in
-        if (entranceState === 'seated' || roundIdx > 0) {
-          // Speak question out loud
-          speakText(firstQ.question);
- 
-          // Append to master transcript history
-          setChatHistory(prev => [
-            ...prev,
-            { role: 'ai', text: `[${activeRound.label} - Q1] ${firstQ.question}` }
-          ]);
+    } catch (e) {
+      console.warn("[Interview] Failed to persist session progress to server:", e);
+    }
+  };
+
+  // Load the single canonical InterviewQuestionSet consumed identically by Normal and VR modes
+  const loadCanonicalQuestions = async () => {
+    if (!targetCompany && !targetRole && !activeSetId) {
+      setInterviewState('NO_CONTEXT');
+      return;
+    }
+
+    setInterviewState('LOADING');
+    setLoadingQuestions(true);
+    setErrorMessage('');
+    setInputText("");
+
+    try {
+      let targetSetId = activeSetId;
+
+      // If no setId was passed from Home, request a canonical question set for the selected company/role
+      if (!targetSetId) {
+        console.log(`[Interview] No activeSetId, requesting canonical question set for ${targetRole} at ${targetCompany}...`);
+        const { data: { session: authSession } } = await supabase.auth.getSession();
+        const effectiveUid = authSession?.user?.id || (typeof window !== 'undefined' ? localStorage.getItem("guest_uid") : null) || "guest-user-123";
+
+        const genRes = await fetch('/api/interview/generate-canonical-set', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            company: targetCompany,
+            role: targetRole,
+            jobDescription: targetJobDescription,
+            candidateSkills: candidateSkills,
+            user_id: effectiveUid
+          })
+        });
+
+        if (!genRes.ok) {
+          throw new Error(`Failed to generate canonical questions (HTTP ${genRes.status})`);
         }
+
+        const genData = await genRes.json();
+        targetSetId = genData.set_id;
+        setActiveSetId(targetSetId);
       }
-    } catch (err) {
-      console.warn("Could not fetch remote questions, calling fallback offline assets:", err instanceof Error ? err.message : String(err));
-      // Fallback local mock questions matching same 8 per round schema
-      const offlineQuestions = getFallbackLocalQuestions(activeRound.key, roleToUse, compToUse, candidateSkills);
-      setQuestions(offlineQuestions);
-      setCurrentQuestionIndex(0);
- 
-      if (offlineQuestions.length > 0) {
-        const firstQ = offlineQuestions[0];
-        setAiSpeech(firstQ.question);
-        
-        if (entranceState === 'seated' || roundIdx > 0) {
-          speakText(firstQ.question);
- 
-          setChatHistory(prev => [
-            ...prev,
-            { role: 'ai', text: `[${activeRound.label} - Q1] ${firstQ.question}` }
-          ]);
+
+      if (targetSetId) {
+        const setRes = await fetch(`/api/interview/question-set/${targetSetId}`);
+        if (!setRes.ok) {
+          throw new Error("HTTP error " + setRes.status + " retrieving canonical question set");
         }
+
+        const canonicalSet = await setRes.json();
+        const loadedQuestions = (canonicalSet.questions || []).map((q: any) => ({
+          ...q,
+          question: q.question_text || q.question, // Alias for backward compatibility
+          id: q.order_index || q.question_id
+        }));
+
+        if (loadedQuestions.length === 0) {
+          throw new Error("Canonical question set is empty");
+        }
+
+        setQuestions(loadedQuestions);
+        console.log(`[Interview] Loaded ${loadedQuestions.length} canonical questions from set ${targetSetId}`);
+
+        // Scoped browser persistence to survive reloads cleanly
+        persistActiveInterviewContext({
+          jobId: targetJobId,
+          company: targetCompany || canonicalSet.company || '',
+          role: targetRole || canonicalSet.role || '',
+          jobDescription: targetJobDescription,
+          candidateSkills,
+          setId: targetSetId,
+          isVR: isVRActive
+        });
+
+        // Restore existing interview session or initialize a new one (strictly scoped to targetSetId)
+        let existingSession: any = null;
+        try {
+          const sessRes = await fetch(`/api/interview/session/by-set/${targetSetId}`);
+          if (sessRes.ok) {
+            existingSession = await sessRes.json();
+          }
+        } catch (e) {
+          console.warn("[Interview] Remote session lookup failed, checking local cache", e);
+        }
+
+        if (!existingSession && typeof window !== 'undefined') {
+          const cached = localStorage.getItem(`interview_session_${targetSetId}`);
+          if (cached) {
+            try {
+              const parsed = JSON.parse(cached);
+              // Protect against stale cross-job session restoration: ensure set matches
+              if (parsed.question_set_id === targetSetId) {
+                existingSession = parsed;
+              }
+            } catch (e) {}
+          }
+        }
+
+        if (existingSession && existingSession.question_set_id === targetSetId) {
+          console.log("[Interview] Restoring verified session:", existingSession.session_id || existingSession.id);
+          const restoredSessId = existingSession.session_id || existingSession.id;
+          setSessionId(restoredSessId);
+          setAnswers(existingSession.answers || {});
+
+          let restoredIndex = 0;
+          if (existingSession.current_question_order && existingSession.current_question_order > 0) {
+            restoredIndex = Math.min(loadedQuestions.length, existingSession.current_question_order - 1);
+          } else if (existingSession.current_question_id) {
+            const foundIdx = loadedQuestions.findIndex((q: any) => q.question_id === existingSession.current_question_id);
+            if (foundIdx !== -1) restoredIndex = foundIdx;
+          }
+
+          if (existingSession.is_completed) {
+            restoredIndex = loadedQuestions.length;
+          }
+
+          setCurrentQuestionIndex(restoredIndex);
+
+          if (loadedQuestions[restoredIndex]) {
+            const currentQ = loadedQuestions[restoredIndex];
+            const qText = currentQ.question_text || currentQ.question;
+            setAiSpeech(qText);
+          }
+        } else {
+          // Initialize fresh interview session scoped to this question set
+          const newSessionId = `SES_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+          setSessionId(newSessionId);
+          setCurrentQuestionIndex(0);
+
+          const firstQ = loadedQuestions[0];
+          const initialQText = firstQ ? (firstQ.question_text || firstQ.question) : "";
+          if (initialQText) {
+            setAiSpeech(initialQText);
+          }
+
+          const newSessionPayload = {
+            session_id: newSessionId,
+            question_set_id: targetSetId,
+            current_question_id: firstQ?.question_id || 'Q001',
+            current_question_order: 1,
+            answers: {},
+            is_completed: false
+          };
+
+          try {
+            await fetch('/api/interview/session/save', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(newSessionPayload)
+            });
+          } catch (e) {
+            console.warn("[Interview] Failed to persist initial session to server:", e);
+          }
+
+          if (typeof window !== 'undefined') {
+            localStorage.setItem(`interview_session_${targetSetId}`, JSON.stringify(newSessionPayload));
+          }
+        }
+
+        setInterviewState('READY');
+      }
+    } catch (err: any) {
+      console.warn("[Interview] Could not load canonical question set:", err);
+      if (targetRole && targetCompany) {
+        console.log(`[Interview] Falling back to tailored local questions for ${targetRole} at ${targetCompany}`);
+        const fallbackQuestions = getFallbackLocalQuestions('technical', targetRole, targetCompany, candidateSkills);
+        setQuestions(fallbackQuestions);
+        setCurrentQuestionIndex(0);
+        if (fallbackQuestions[0]) {
+          setAiSpeech(fallbackQuestions[0].question);
+        }
+        setInterviewState('READY');
+      } else {
+        setErrorMessage(err?.message || "Failed to load canonical interview question set.");
+        setInterviewState('ERROR');
       }
     } finally {
       setLoadingQuestions(false);
     }
   };
- 
-  // Run initial fetch for Self-Introduction round
+
+  // Run initial fetch for canonical questions
   useEffect(() => {
-    fetchRoundQuestions(0);
-  }, []);
+    loadCanonicalQuestions();
+  }, [activeSetId]);
 
   // Entrance Sequence Orchestration Timers
   const startEntranceSequence = () => {
@@ -1234,110 +1597,77 @@ export default function Interview() {
   useEffect(() => {
     if (entranceState === 'seated' && questions.length > 0 && currentQuestionIndex === 0 && chatHistory.length === 0) {
       const firstQ = questions[0];
-      setAiSpeech(firstQ.question);
-      speakText(firstQ.question);
+      const qText = firstQ.question_text || firstQ.question;
+      const qId = firstQ.question_id || 'Q001';
+      setAiSpeech(qText);
+      speakText(qText);
       setChatHistory(prev => [
         ...prev,
-        { role: 'ai', text: `[${ROUNDS[currentRoundIndex].label} - Q1] ${firstQ.question}` }
+        { role: 'ai', text: `[${firstQ.round_name || firstQ.category || 'Interview'} - ${qId}] ${qText}` }
       ]);
     }
   }, [entranceState, questions]);
 
-  // Vocalize questions using premium SpeechSynthesis
+  // Vocalize exact stored canonical question text verbatim using Gemini Live ONLY
   const speakText = (text: string) => {
-    if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.rate = 0.95;
-      utterance.pitch = 1.05; // Slightly higher pitch for clear female avatar delivery
-      
-      utterance.onstart = () => {
-        setIsSpeaking(true);
-      };
-      utterance.onend = () => {
-        setIsSpeaking(false);
-      };
-      utterance.onerror = () => {
-        setIsSpeaking(false);
-      };
-      utterance.onpause = () => {
-        setIsSpeaking(false);
-      };
-      utterance.onresume = () => {
-        setIsSpeaking(true);
-      };
+    if (!text) return;
+    setIsSpeaking(true);
+    setAvatarState('speaking');
 
-      const setVoiceAndSpeak = () => {
-        const voices = window.speechSynthesis.getVoices();
-        // Prefer Samantha/other female-aligned audio models
-        const preferredVoice = voices.find(v => 
-          v.name.includes('Samantha') || 
-          v.name.includes('Google US English') || 
-          v.name.includes('Zira') || 
-          v.name.includes('Hazel') ||
-          v.lang === 'en-US'
-        );
-        if (preferredVoice) utterance.voice = preferredVoice;
-        window.speechSynthesis.speak(utterance);
-      };
-
-      if (window.speechSynthesis.getVoices().length > 0) {
-        setVoiceAndSpeak();
-      } else {
-        window.speechSynthesis.onvoiceschanged = setVoiceAndSpeak;
-      }
+    if (geminiLiveClient && geminiLiveClient.isConnected()) {
+      geminiLiveClient.speakQuestion(text);
+    } else {
+      console.warn("Gemini Live not connected. Cannot speak question.");
+      setIsSpeaking(false);
+      setAvatarState('idle');
     }
   };
 
-  // Record active user message, advance question, or finish round
+  // Record candidate answer against exact canonical question_id and advance
   const handleUserMessage = async (message: string) => {
     const trimmedMessage = message.trim();
     if (!trimmedMessage || loadingQuestions || isEvaluatingAnswer) return;
 
-    // Immediately stop avatar speaking
-    if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-      setIsSpeaking(false);
+    // Immediately stop avatar speaking and audio playback
+    if (geminiLiveClient) {
+      geminiLiveClient.stopAudio();
     }
+    setIsSpeaking(false);
+    setAvatarState('idle');
 
-    // Save active reply
-    const answerKey = `${currentRoundIndex}_${currentQuestionIndex}${askedFollowUp ? '_followup' : ''}`;
-    setAnswers(prev => ({ ...prev, [answerKey]: trimmedMessage }));
-
-    // Append answer log to transcript
+    // Save active reply keyed directly by exact canonical question ID
     const activeQ = questions[currentQuestionIndex];
+    const qId = activeQ?.question_id || `Q${String(currentQuestionIndex + 1).padStart(3, '0')}`;
+    const updatedAnswers = { ...answers, [qId]: trimmedMessage };
+    setAnswers(updatedAnswers);
+
+    // Append answer log to transcript with exact question_id
     setChatHistory(prev => [
       ...prev,
-      { role: 'user', text: trimmedMessage }
+      { role: 'user', text: trimmedMessage, question_id: qId }
     ]);
     setInputText("");
+    setLiveFinalTranscript("");
+    setLiveInterimTranscript("");
 
-    // Calculate randomized real-time visual telemetry fluctuations
+    // Persist session progress against exact question_id
+    persistSessionProgress(qId, currentQuestionIndex + 1, updatedAnswers, false);
+
+    // Calculate real-time visual telemetry fluctuations
     const wordCount = trimmedMessage.split(/\s+/).filter(Boolean).length;
     const computedSpeed = wordCount > 0 ? Math.min(210, Math.max(90, Math.floor((wordCount / 12) * 140))) : 130;
     const hasFillers = trimmedMessage.toLowerCase().includes("um") || trimmedMessage.toLowerCase().includes("like") || trimmedMessage.toLowerCase().includes("uh");
     
-    setMetrics(prev => {
-      const scaleTe = Math.min(98, Math.max(70, prev.technical + (wordCount > 15 ? 1 : -1) + Math.floor(Math.random() * 3 - 1)));
-      const scaleCo = Math.min(99, Math.max(68, prev.communication + (wordCount > 10 ? 2 : -2)));
-      return {
-        confidence: Math.min(98, Math.max(74, prev.confidence + (wordCount > 12 ? 1 : -2) + Math.floor(Math.random() * 4 - 2))),
-        communication: scaleCo,
-        technical: scaleTe,
-        eyeContact: Math.min(97, Math.max(85, prev.eyeContact + Math.floor(Math.random() * 5 - 2))),
-        speakingSpeed: computedSpeed,
-        fillerCount: prev.fillerCount + (hasFillers ? 1 : 0)
-      };
-    });
+    setMetrics(prev => ({
+      confidence: Math.min(98, Math.max(74, prev.confidence + (wordCount > 12 ? 1 : -2))),
+      communication: Math.min(99, Math.max(68, prev.communication + (wordCount > 10 ? 2 : -2))),
+      technical: Math.min(98, Math.max(70, prev.technical + (wordCount > 15 ? 1 : -1))),
+      eyeContact: Math.min(97, Math.max(85, prev.eyeContact + Math.floor(Math.random() * 5 - 2))),
+      speakingSpeed: computedSpeed,
+      fillerCount: prev.fillerCount + (hasFillers ? 1 : 0)
+    }));
 
-    if (trimmedMessage === "[Candidate skipped or requested next question]" || currentQuestionIndex >= 8) {
-       advanceToNextQuestion();
-       return;
-    }
-
-    setIsEvaluatingAnswer(true);
-    let speechPrefix = "";
-    
+    // Asynchronously request scoring for HUD/mentor advice without blocking flow or altering questions
     try {
       const { data: { session } } = await supabase.auth.getSession();
       const token = session?.access_token || (() => {
@@ -1346,104 +1676,71 @@ export default function Interview() {
         return `header.${payloadB64}.signature`;
       })();
 
-      const qText = pendingFollowUp || activeQ.question;
-      const res = await fetch('/api/interview/answer/score', {
+      const exactQText = activeQ?.question_text || activeQ?.question || "";
+      fetch('/api/interview/answer/score', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({
           company: targetCompany,
           role: targetRole,
-          round: ROUNDS[currentRoundIndex].label,
-          question: qText,
+          round: activeQ?.round_name || ROUNDS[currentRoundIndex]?.label || "Technical Round",
+          question: exactQText,
           answer: trimmedMessage
         })
-      });
-      const data = await res.json();
-      
-      let combinedSpeech = data.interviewer_would_say || "Got it.";
-      updateMentorAdvice(`NAYA SCORE: ${data.score}/${data.max_score} (${data.verdict}). ${data.ideal_answer_in_one_line || ""}`);
-      
-      if (data.ask_follow_up && !askedFollowUp && data.follow_up_question) {
-         combinedSpeech += " " + data.follow_up_question;
-         setPendingFollowUp(data.follow_up_question);
-         setAskedFollowUp(true);
-         
-         setChatHistory(prev => [
-           ...prev,
-           { role: 'ai', text: `[${ROUNDS[currentRoundIndex].label} - Follow-up] ${combinedSpeech}` }
-         ]);
-         setAiSpeech(combinedSpeech);
-         speakText(combinedSpeech);
-         setIsEvaluatingAnswer(false);
-         return; // Intercept: don't advance to next question
-      } else {
-         // Reset follow up states
-         setPendingFollowUp(null);
-         setAskedFollowUp(false);
-         
-         setChatHistory(prev => [
-           ...prev,
-           { role: 'ai', text: `[${ROUNDS[currentRoundIndex].label} - Feedback] ${data.interviewer_would_say}` }
-         ]);
-         speechPrefix = data.interviewer_would_say + " ";
-      }
+      }).then(r => r.json()).then(data => {
+        if (data?.score !== undefined) {
+          updateMentorAdvice(`SCORE: ${data.score}/${data.max_score} (${data.verdict}). ${data.ideal_answer_in_one_line || ""}`);
+        }
+      }).catch(() => {});
     } catch (e) {
-      console.warn("Could not score answer", e);
+      // Non-blocking telemetry
     }
 
-    // After scoring, advance to question or next round
-    advanceToNextQuestion(speechPrefix);
+    // Advance to next canonical question
+    advanceToNextQuestion();
   };
 
-  const advanceToNextQuestion = (speechPrefix: string = "") => {
+  const advanceToNextQuestion = () => {
     setIsEvaluatingAnswer(false);
     setPendingFollowUp(null);
     setAskedFollowUp(false);
-    // Look up what step is next
-    if (currentQuestionIndex < 7) {
-      // Step to next question index in active round
-      const nextIdx = currentQuestionIndex + 1;
+
+    const nextIdx = currentQuestionIndex + 1;
+    if (nextIdx < questions.length) {
+      // Step to next canonical question in order
       setCurrentQuestionIndex(nextIdx);
 
       const nextQ = questions[nextIdx];
-      setAiSpeech(speechPrefix + nextQ.question);
-      speakText(speechPrefix + nextQ.question);
+      const nextQId = nextQ.question_id || `Q${String(nextIdx + 1).padStart(3, '0')}`;
+      const nextQText = nextQ.question_text || nextQ.question;
+
+      // AI speaks the EXACT stored question text - NO prefix, NO alteration
+      setAiSpeech(nextQText);
+      speakText(nextQText);
 
       setChatHistory(prev => [
         ...prev,
-        { role: 'ai', text: `[${ROUNDS[currentRoundIndex].label} - Q${nextIdx + 1}] ${speechPrefix}${nextQ.question}` }
+        { role: 'ai', text: `[${nextQ.round_name || nextQ.category || 'Interview'} - ${nextQId}] ${nextQText}`, question_id: nextQId }
       ]);
-    } else {
-      // Completed last question (8th question of the round)
-      if (currentRoundIndex < 5) {
-        // Prompt transition to next round
-        const nextRoundIdx = currentRoundIndex + 1;
-        const nextRound = ROUNDS[nextRoundIdx];
-        
-        const transitionNotice = `${speechPrefix}Excellent. We have completed all 8 questions of the ${ROUNDS[currentRoundIndex].label}. We will now transition to the next stage: ${nextRound.label}.`;
-        setAiSpeech(transitionNotice);
-        speakText(transitionNotice);
-        
-        setChatHistory(prev => [
-          ...prev,
-          { role: 'ai', text: `[Round Transformed] Completed ${ROUNDS[currentRoundIndex].label}. Prepared to proceed to ${nextRound.label}.` }
-        ]);
-        
-        // Set state to completion placeholder
-        setCurrentQuestionIndex(8); 
-      } else {
-        // Fully completed all 6 rounds (48 questions total!)
-        const finalNotice = `${speechPrefix}We are completely done! You have finished all 6 rounds. Click 'Assess & View Report' in the HUD to get your final evaluation!`;
-        setAiSpeech(finalNotice);
-        speakText(finalNotice);
-        
-        setChatHistory(prev => [
-          ...prev,
-          { role: 'ai', text: `[Simulation Concluded] Candidate completed all diagnostic panels.` }
-        ]);
 
-        setCurrentQuestionIndex(8);
-      }
+      // Persist session progress
+      persistSessionProgress(nextQId, nextIdx + 1, answers, false);
+    } else {
+      // Fully completed all questions in the canonical question set
+      const totalQ = questions.length;
+      setCurrentQuestionIndex(totalQ);
+
+      const finalNotice = `Excellent work! You have completed all ${totalQ} canonical interview questions. Click 'Assess & View Report' to view your comprehensive evaluation!`;
+      setAiSpeech(finalNotice);
+      speakText(finalNotice);
+
+      setChatHistory(prev => [
+        ...prev,
+        { role: 'ai', text: `[Interview Completed] Candidate completed all ${totalQ} questions in the canonical set.` }
+      ]);
+
+      const lastQId = questions[totalQ - 1]?.question_id || 'COMPLETED';
+      persistSessionProgress(lastQId, totalQ, answers, true);
     }
   };
 
@@ -1461,52 +1758,6 @@ export default function Interview() {
     }
   };
 
-  // Web Speech Microphone Capture
-  useEffect(() => {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    let recognition: any = null;
-
-    if (SpeechRecognition && isMicOn) {
-      recognition = new SpeechRecognition();
-      recognition.continuous = false;
-      recognition.interimResults = false;
-      recognition.lang = 'en-US';
-
-      recognition.onresult = (event: any) => {
-        const transcript = event.results[0][0].transcript;
-        const normalized = transcript.toLowerCase().trim();
-        if (normalized === 'zoom in' || normalized.includes('zoom in')) {
-          handleZoomIn();
-          setIsMicOn(false);
-          return;
-        } else if (normalized === 'zoom out' || normalized.includes('zoom out')) {
-          handleZoomOut();
-          setIsMicOn(false);
-          return;
-        } else if (normalized === 'reset zoom' || normalized.includes('reset zoom')) {
-          handleResetZoom();
-          setIsMicOn(false);
-          return;
-        }
-        handleUserMessage(transcript);
-        setIsMicOn(false);
-      };
-
-      recognition.onerror = (e: any) => {
-        const errorMsg = e instanceof Error ? e.message : (e.error || e.message || String(e));
-        console.warn("Speech recognition error:", errorMsg);
-        setIsMicOn(false);
-      };
-
-      recognition.start();
-    }
-
-    return () => {
-      if (recognition) {
-        recognition.stop();
-      }
-    };
-  }, [isMicOn]);
 
   // Aggregate transcripts and evaluate using Gemini grading API
   const handleGenerateEvaluationReport = async () => {
@@ -1541,7 +1792,10 @@ export default function Interview() {
           transcript: chatHistory,
           role: targetRole,
           company: targetCompany,
-          candidateSkills: candidateSkills
+          candidateSkills: candidateSkills,
+          answers: answers,
+          codeAnswers: codeAnswers,
+          behaviorLogs: behaviorLogs
         })
       });
 
@@ -1687,6 +1941,88 @@ export default function Interview() {
   const isTechnicalRound = ROUNDS[currentRoundIndex]?.key === 'technical';
   const secondaryInterviewer = selectedInterviewer.id === 'james' ? INTERVIEWERS[0] : INTERVIEWERS[2];
 
+  // Lifecycle State 1: NO_CONTEXT (Safe return to jobs; no silent redirects or defaults)
+  if (interviewState === 'NO_CONTEXT') {
+    return (
+      <div className="min-h-screen w-full bg-[#09090b] text-white flex flex-col items-center justify-center p-6">
+        <div className="max-w-md w-full bg-zinc-900/90 border border-zinc-800 rounded-3xl p-8 shadow-2xl backdrop-blur-xl text-center space-y-6">
+          <div className="w-16 h-16 mx-auto rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center">
+            <AlertCircle className="w-8 h-8 text-amber-400" />
+          </div>
+          <div className="space-y-2">
+            <h2 className="text-xl font-bold text-zinc-100">No Active Interview Selected</h2>
+            <p className="text-sm text-zinc-400 leading-relaxed">
+              No interview context was found for this session. Please select a specific role from Live Jobs or your tailored dashboard to launch your interview.
+            </p>
+          </div>
+          <button
+            onClick={() => navigate('/?tab=live-jobs')}
+            className="w-full py-3.5 px-4 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-zinc-950 font-bold text-sm tracking-wide transition-all shadow-lg shadow-cyan-500/20 flex items-center justify-center gap-2 cursor-pointer"
+          >
+            Browse Live Jobs
+            <ChevronRight className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Lifecycle State 2: LOADING (Preparing environment for selected job)
+  if (interviewState === 'LOADING') {
+    return (
+      <div className="min-h-screen w-full bg-[#09090b] text-white flex flex-col items-center justify-center p-6">
+        <div className="max-w-md w-full bg-zinc-900/90 border border-zinc-800 rounded-3xl p-8 shadow-2xl backdrop-blur-xl text-center space-y-6">
+          <div className="w-16 h-16 mx-auto rounded-2xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center">
+            <Loader2 className="w-8 h-8 text-cyan-400 animate-spin" />
+          </div>
+          <div className="space-y-2">
+            <h2 className="text-xl font-bold text-zinc-100">Preparing Interview Environment</h2>
+            <p className="text-sm text-zinc-400">
+              Loading questions for <span className="text-cyan-400 font-semibold">{targetRole || "Role"}</span> at <span className="text-purple-400 font-semibold">{targetCompany || "Company"}</span>...
+            </p>
+            {activeSetId && (
+              <p className="text-xs font-mono text-zinc-500 pt-1">Set ID: {activeSetId}</p>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Lifecycle State 3: ERROR (Clear retry and fallback recovery options)
+  if (interviewState === 'ERROR') {
+    return (
+      <div className="min-h-screen w-full bg-[#09090b] text-white flex flex-col items-center justify-center p-6">
+        <div className="max-w-md w-full bg-zinc-900/90 border border-red-500/30 rounded-3xl p-8 shadow-2xl backdrop-blur-xl text-center space-y-6">
+          <div className="w-16 h-16 mx-auto rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-center">
+            <AlertCircle className="w-8 h-8 text-red-400" />
+          </div>
+          <div className="space-y-2">
+            <h2 className="text-xl font-bold text-zinc-100">Unable to Load Interview</h2>
+            <p className="text-sm text-zinc-400">
+              {errorMessage || "We encountered an issue preparing the interview questions for this role."}
+            </p>
+          </div>
+          <div className="flex gap-3">
+            <button
+              onClick={() => loadCanonicalQuestions()}
+              className="flex-1 py-3 px-4 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-semibold text-xs transition-all cursor-pointer"
+            >
+              Retry Generation
+            </button>
+            <button
+              onClick={() => navigate('/?tab=live-jobs')}
+              className="flex-1 py-3 px-4 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-zinc-950 font-bold text-xs transition-all cursor-pointer"
+            >
+              Back to Jobs
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Lifecycle State 4: READY (Render Normal or WebXR VR Room)
   return (
     <div className="relative w-full h-screen bg-transparent text-white overflow-hidden select-none">
       <div id="vr-ui-overlay" className="absolute inset-0 pointer-events-none z-10">
@@ -1723,7 +2059,7 @@ export default function Interview() {
                 </div>
                 <div className="p-2 border border-zinc-800 bg-zinc-900/30 rounded-lg">
                   <span className="text-zinc-400 block text-[9px] uppercase font-mono font-bold leading-none">Voice Engine:</span>
-                  <span className="text-zinc-200 font-medium font-sans mt-0.5 block">SpeechSynthesis</span>
+                  <span className="text-zinc-200 font-medium font-sans mt-0.5 block">Gemini Live</span>
                 </div>
                 <div className="p-2 border border-zinc-800 bg-zinc-900/30 rounded-lg col-span-2">
                   <span className="text-zinc-400 block text-[9px] uppercase font-mono font-bold leading-none">Primary Skills Match:</span>
@@ -1742,102 +2078,104 @@ export default function Interview() {
         </div>
       )}
       
-      {/* VR HUD BAR Overlay */}
-      <div className="absolute top-0 inset-x-0 p-5 flex justify-between items-start z-10 pointer-events-none">
-        
-        {/* Left Side */}
-        <div className="flex gap-2.5 items-center flex-wrap">
-          <button 
-            onClick={() => {
-              if ('speechSynthesis' in window) window.webkitSpeechSynthesis?.cancel();
-              navigate('/');
-            }}
-            className="pointer-events-auto px-4 py-2.5 rounded-xl bg-red-950/40 border border-red-800 text-red-200 hover:bg-red-500 hover:text-zinc-950 shadow-xl transition-all flex items-center gap-2 font-black text-xs uppercase cursor-pointer"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            Exit
-          </button>
-          <span className="px-3.5 py-2.5 rounded-xl bg-zinc-900/80 border border-zinc-800 backdrop-blur-md text-zinc-200 font-mono text-[10px] font-bold uppercase tracking-widest leading-none shadow-sm">
-            {targetCompany} • {targetRole}
-          </span>
-          <span className="px-3.5 py-2.5 rounded-xl bg-cyan-950/80 border border-cyan-800 backdrop-blur-md text-cyan-400 font-mono text-[10px] font-bold uppercase tracking-widest leading-none flex items-center gap-2 shadow-sm">
-            <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
-            {ROUNDS[currentRoundIndex].label}
-          </span>
+      {/* VR HUD BAR Overlay (rendered in VR mode) */}
+      {isVRActive && (
+        <div className="absolute top-0 inset-x-0 p-5 flex justify-between items-start z-10 pointer-events-none">
           
-          <span className="px-3 py-2.5 rounded-xl bg-zinc-900/90 border border-zinc-800 text-zinc-300 font-mono text-[10px] font-bold shadow-sm">
-            PROGRESS: {currentQuestionIndex < 8 ? `${currentQuestionIndex + 1}/8` : 'Completed'}
-          </span>
-        </div>
-
-        {/* Right HUD actions */}
-        <div className="flex gap-3 flex-wrap items-center">
-          <div className="px-4 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 shadow-sm backdrop-blur-md flex items-center gap-2.5 text-zinc-200 pointer-events-auto">
-            <Clock className="w-4 h-4 text-cyan-400 animate-pulse" />
-            <span className="font-mono text-xs font-bold leading-none">{formatTime(timeLeft)}</span>
-          </div>
-          
-          <button 
-            onClick={() => setIsMicOn(!isMicOn)}
-            className={`pointer-events-auto px-4 py-2.5 rounded-xl border backdrop-blur-md flex items-center gap-2 text-[10px] uppercase font-bold tracking-wider transition-all cursor-pointer shadow-sm ${
-              isMicOn 
-                ? 'bg-cyan-950 border-cyan-500 text-cyan-400 font-extrabold' 
-                : 'bg-zinc-900 border-zinc-800 text-zinc-300 hover:bg-zinc-855'
-            }`}
-          >
-            {isMicOn ? <Mic className="w-4.5 h-4.5 text-cyan-400" /> : <MicOff className="w-4.5 h-4.5 text-zinc-400" />}
-            {isMicOn ? 'ACTIVE' : 'MIC OFF'}
-          </button>
-          
-          <button
-            onClick={handleGenerateEvaluationReport}
-            className="pointer-events-auto px-4 py-2.5 rounded-xl bg-cyan-500 hover:bg-cyan-600 text-zinc-950 font-black uppercase text-[10px] tracking-wider hover:scale-[1.01] hover:shadow-cyan-500/20 active:scale-[0.99] transition-all flex items-center gap-1.5 cursor-pointer shadow-md"
-          >
-            <ClipboardCheck className="w-4.5 h-4.5" />
-            Assess & View Report
-          </button>
-          
-          <div className="relative pointer-events-auto">
-            <button
-              onClick={() => setIsSettingsOpen(!isSettingsOpen)}
-              className="px-4 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 transition-all flex items-center gap-2 text-[10px] uppercase font-bold tracking-wider text-zinc-300 shadow-sm cursor-pointer"
+          {/* Left Side */}
+          <div className="flex gap-2.5 items-center flex-wrap">
+            <button 
+              onClick={() => {
+                if (geminiLiveClient) geminiLiveClient.stopAudio();
+                navigate('/');
+              }}
+              className="pointer-events-auto px-4 py-2.5 rounded-xl bg-red-950/40 border border-red-800 text-red-200 hover:bg-red-500 hover:text-zinc-950 shadow-xl transition-all flex items-center gap-2 font-black text-xs uppercase cursor-pointer"
             >
-              <Smartphone className="w-4 h-4" />
-              Settings
+              <ArrowLeft className="w-4 h-4" />
+              Exit
             </button>
-            {isSettingsOpen && (
-              <div className="absolute right-0 top-full mt-2 w-72 bg-zinc-900/95 border border-zinc-800 rounded-xl shadow-2xl backdrop-blur-xl p-4 flex flex-col gap-4 text-left z-50">
-                <div>
-                  <span className="text-[9px] uppercase tracking-widest font-black text-cyan-400 font-mono">Environment Controls</span>
-                </div>
-                <div className="space-y-1.5">
-                  <span className="text-[8px] uppercase font-bold text-zinc-400 font-mono">Camera Zoom</span>
-                  <div className="grid grid-cols-3 gap-1.5">
-                    <button onClick={handleZoomIn} className="py-1.5 text-center bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-mono text-[9px] font-bold rounded-lg transition-colors flex justify-center items-center cursor-pointer"><ZoomIn className="w-3.5 h-3.5 mr-1"/> In</button>
-                    <button onClick={handleZoomOut} className="py-1.5 text-center bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-mono text-[9px] font-bold rounded-lg transition-colors flex justify-center items-center cursor-pointer"><ZoomOut className="w-3.5 h-3.5 mr-1"/> Out</button>
-                    <button onClick={handleResetZoom} className="py-1.5 text-center bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-mono text-[9px] font-bold rounded-lg transition-colors cursor-pointer">Reset</button>
+            <span className="px-3.5 py-2.5 rounded-xl bg-zinc-900/80 border border-zinc-800 backdrop-blur-md text-zinc-200 font-mono text-[10px] font-bold uppercase tracking-widest leading-none shadow-sm">
+              {targetCompany} • {targetRole}
+            </span>
+            <span className="px-3.5 py-2.5 rounded-xl bg-cyan-950/80 border border-cyan-800 backdrop-blur-md text-cyan-400 font-mono text-[10px] font-bold uppercase tracking-widest leading-none flex items-center gap-2 shadow-sm">
+              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
+              {ROUNDS[currentRoundIndex].label}
+            </span>
+            
+            <span className="px-3 py-2.5 rounded-xl bg-zinc-900/90 border border-zinc-800 text-zinc-300 font-mono text-[10px] font-bold shadow-sm">
+              PROGRESS: {currentQuestionIndex < questions.length ? `${questions[currentQuestionIndex]?.question_id || `Q${currentQuestionIndex + 1}`} (${currentQuestionIndex + 1}/${questions.length})` : 'Completed'}
+            </span>
+          </div>
+
+          {/* Right HUD actions */}
+          <div className="flex gap-3 flex-wrap items-center">
+            <div className="px-4 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 shadow-sm backdrop-blur-md flex items-center gap-2.5 text-zinc-200 pointer-events-auto">
+              <Clock className="w-4 h-4 text-cyan-400 animate-pulse" />
+              <span className="font-mono text-xs font-bold leading-none">{formatTime(timeLeft)}</span>
+            </div>
+            
+            <button 
+              onClick={() => setIsMicOn(!isMicOn)}
+              className={`pointer-events-auto px-4 py-2.5 rounded-xl border backdrop-blur-md flex items-center gap-2 text-[10px] uppercase font-bold tracking-wider transition-all cursor-pointer shadow-sm ${
+                isMicOn 
+                  ? 'bg-cyan-950 border-cyan-500 text-cyan-400 font-extrabold' 
+                  : 'bg-zinc-900 border-zinc-800 text-zinc-300 hover:bg-zinc-855'
+              }`}
+            >
+              {isMicOn ? <Mic className="w-4.5 h-4.5 text-cyan-400" /> : <MicOff className="w-4.5 h-4.5 text-zinc-400" />}
+              {isMicOn ? 'ACTIVE' : 'MIC OFF'}
+            </button>
+            
+            <button
+              onClick={handleGenerateEvaluationReport}
+              className="pointer-events-auto px-4 py-2.5 rounded-xl bg-cyan-500 hover:bg-cyan-600 text-zinc-950 font-black uppercase text-[10px] tracking-wider hover:scale-[1.01] hover:shadow-cyan-500/20 active:scale-[0.99] transition-all flex items-center gap-1.5 cursor-pointer shadow-md"
+            >
+              <ClipboardCheck className="w-4.5 h-4.5" />
+              Assess & View Report
+            </button>
+            
+            <div className="relative pointer-events-auto">
+              <button
+                onClick={() => setIsSettingsOpen(!isSettingsOpen)}
+                className="px-4 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 transition-all flex items-center gap-2 text-[10px] uppercase font-bold tracking-wider text-zinc-300 shadow-sm cursor-pointer"
+              >
+                <Smartphone className="w-4 h-4" />
+                Settings
+              </button>
+              {isSettingsOpen && (
+                <div className="absolute right-0 top-full mt-2 w-72 bg-zinc-900/95 border border-zinc-800 rounded-xl shadow-2xl backdrop-blur-xl p-4 flex flex-col gap-4 text-left z-50">
+                  <div>
+                    <span className="text-[9px] uppercase tracking-widest font-black text-cyan-400 font-mono">Environment Controls</span>
+                  </div>
+                  <div className="space-y-1.5">
+                    <span className="text-[8px] uppercase font-bold text-zinc-400 font-mono">Camera Zoom</span>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      <button onClick={handleZoomIn} className="py-1.5 text-center bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-mono text-[9px] font-bold rounded-lg transition-colors flex justify-center items-center cursor-pointer"><ZoomIn className="w-3.5 h-3.5 mr-1"/> In</button>
+                      <button onClick={handleZoomOut} className="py-1.5 text-center bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-mono text-[9px] font-bold rounded-lg transition-colors flex justify-center items-center cursor-pointer"><ZoomOut className="w-3.5 h-3.5 mr-1"/> Out</button>
+                      <button onClick={handleResetZoom} className="py-1.5 text-center bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-mono text-[9px] font-bold rounded-lg transition-colors cursor-pointer">Reset</button>
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <span className="text-[8px] uppercase font-bold text-zinc-400 font-mono">Lighting Mode</span>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      <button onClick={() => setDaylightMode('morning')} className={`py-1.5 text-center font-mono text-[9px] font-bold rounded-lg transition-colors cursor-pointer ${daylightMode === 'morning' ? 'bg-amber-400 text-zinc-900' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300'}`}>Morning</button>
+                      <button onClick={() => setDaylightMode('sunset')} className={`py-1.5 text-center font-mono text-[9px] font-bold rounded-lg transition-colors cursor-pointer ${daylightMode === 'sunset' ? 'bg-orange-500 text-zinc-900' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300'}`}>Evening</button>
+                      <button onClick={() => setDaylightMode('night')} className={`py-1.5 text-center font-mono text-[9px] font-bold rounded-lg transition-colors cursor-pointer ${daylightMode === 'night' ? 'bg-indigo-500 text-zinc-900' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300'}`}>Night</button>
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <span className="text-[8px] uppercase font-bold text-zinc-400 font-mono">VR / AR Experience</span>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <button onClick={enterVRMode} className="py-1.5 text-center bg-zinc-800 hover:bg-zinc-700 text-cyan-400 font-mono text-[9px] font-bold rounded-lg transition-colors cursor-pointer">Enter VR</button>
+                      <button onClick={enterARMode} className="py-1.5 text-center bg-zinc-800 hover:bg-zinc-700 text-emerald-400 font-mono text-[9px] font-bold rounded-lg transition-colors cursor-pointer">Enter AR</button>
+                    </div>
                   </div>
                 </div>
-                <div className="space-y-1.5">
-                  <span className="text-[8px] uppercase font-bold text-zinc-400 font-mono">Lighting Mode</span>
-                  <div className="grid grid-cols-3 gap-1.5">
-                    <button onClick={() => setDaylightMode('morning')} className={`py-1.5 text-center font-mono text-[9px] font-bold rounded-lg transition-colors cursor-pointer ${daylightMode === 'morning' ? 'bg-amber-400 text-zinc-900' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300'}`}>Morning</button>
-                    <button onClick={() => setDaylightMode('sunset')} className={`py-1.5 text-center font-mono text-[9px] font-bold rounded-lg transition-colors cursor-pointer ${daylightMode === 'sunset' ? 'bg-orange-500 text-zinc-900' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300'}`}>Evening</button>
-                    <button onClick={() => setDaylightMode('night')} className={`py-1.5 text-center font-mono text-[9px] font-bold rounded-lg transition-colors cursor-pointer ${daylightMode === 'night' ? 'bg-indigo-500 text-zinc-900' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300'}`}>Night</button>
-                  </div>
-                </div>
-                <div className="space-y-1.5">
-                  <span className="text-[8px] uppercase font-bold text-zinc-400 font-mono">VR / AR Experience</span>
-                  <div className="grid grid-cols-2 gap-1.5">
-                    <button onClick={enterVRMode} className="py-1.5 text-center bg-zinc-800 hover:bg-zinc-700 text-cyan-400 font-mono text-[9px] font-bold rounded-lg transition-colors cursor-pointer">Enter VR</button>
-                    <button onClick={enterARMode} className="py-1.5 text-center bg-zinc-800 hover:bg-zinc-700 text-emerald-400 font-mono text-[9px] font-bold rounded-lg transition-colors cursor-pointer">Enter AR</button>
-                  </div>
-                </div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         </div>
-      </div>
+      )}
       
       {/* 2D Interactive Sidebar - Live Rounds Tracker (Hidden per request) */}
       <div className="hidden">
@@ -1895,17 +2233,24 @@ export default function Interview() {
       <div className="absolute top-24 right-5 w-[320px] md:w-[360px] max-h-[86vh] overflow-y-auto flex flex-col gap-3.5 z-10 pointer-events-none pr-1.5 scrollbar-thin scrollbar-thumb-zinc-800">
         
         {/* CURRENT QUESTION DISPLAY */}
-        {questions[currentQuestionIndex] && currentQuestionIndex < 8 && (
+        {questions[currentQuestionIndex] && currentQuestionIndex < questions.length && (
           <motion.div
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
             className="pointer-events-auto bg-zinc-900 border border-zinc-800 rounded-2xl p-5 shadow-xl space-y-3 backdrop-blur-md text-left"
           >
-            <span className="text-[9px] uppercase font-bold tracking-widest text-cyan-400 font-mono block">
-              Current Interview Question
-            </span>
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] uppercase font-bold tracking-widest text-cyan-400 font-mono block">
+                {questions[currentQuestionIndex].question_id || `Q${String(currentQuestionIndex + 1).padStart(3, '0')}`} · {questions[currentQuestionIndex].category ? questions[currentQuestionIndex].category.replace('_', ' ').toUpperCase() : 'CANONICAL QUESTION'}
+              </span>
+              {activeSetId && (
+                <span className="text-[9px] text-zinc-400 font-mono bg-zinc-800/80 px-2 py-0.5 rounded border border-zinc-700/50">
+                  {activeSetId}
+                </span>
+              )}
+            </div>
             <div className="text-sm md:text-base font-bold text-zinc-100 leading-relaxed font-sans">
-              "{questions[currentQuestionIndex].question}"
+              "{questions[currentQuestionIndex].question_text || questions[currentQuestionIndex].question}"
             </div>
             {(questions[currentQuestionIndex].follow_up || questions[currentQuestionIndex].follow_up_if_weak) && (
               <div className="text-[11px] text-zinc-300 mt-2 font-mono leading-relaxed pt-2 border-t border-zinc-800">
@@ -1937,7 +2282,7 @@ export default function Interview() {
              {loadingQuestions ? (
                <div className="flex flex-col items-center justify-center my-auto py-12 gap-3 text-center">
                  <Loader2 className="w-8 h-8 animate-spin text-cyan-400" />
-                 <span className="text-xs text-zinc-400 font-mono">Compiling round-specific questions...</span>
+                 <span className="text-xs text-zinc-400 font-mono">Loading canonical question set...</span>
                </div>
              ) : chatHistory.length === 0 ? (
                <div className="text-zinc-300 text-xs text-center my-auto italic">
@@ -1966,58 +2311,49 @@ export default function Interview() {
              <div ref={messagesEndRef} />
           </div>
 
-                    {/* Prompt transition button in case question flow completes */}
-          {currentQuestionIndex === 8 && (
+          {/* Prompt transition button in case question flow completes */}
+          {currentQuestionIndex >= questions.length && questions.length > 0 && (
             <div className="p-4 bg-zinc-950 text-center space-y-3.5 border-t border-zinc-800">
-              {currentRoundIndex < 5 ? (
-                <>
-                  <p className="text-xs text-zinc-300 font-medium font-sans">Submit & proceed to next round?</p>
-                  <button
-                    onClick={handleProceedToNextRound}
-                    className="w-full py-2.5 bg-cyan-500 hover:bg-cyan-600 text-zinc-950 rounded-xl font-bold uppercase text-xs tracking-wider transition-all flex items-center justify-center gap-1 cursor-pointer"
-                  >
-                    Enter {ROUNDS[currentRoundIndex + 1]?.label}
-                    <ChevronRight className="w-3.5 h-3.5 text-zinc-950 fill-current" />
-                  </button>
-                </>
-              ) : (
-                <>
-                  <p className="text-xs text-emerald-400 font-bold">🎉 All 6 interview rounds concluded successfully!</p>
-                  <button
-                    onClick={handleGenerateEvaluationReport}
-                    className="w-full py-2.5 bg-emerald-500 hover:bg-emerald-600 text-zinc-950 rounded-xl font-bold uppercase text-xs tracking-wider transition-all flex items-center justify-center gap-1 cursor-pointer shadow-lg shadow-emerald-500/10"
-                  >
-                    <ClipboardCheck className="w-4 h-4" />
-                    Assess & View Feedback Report
-                  </button>
-                </>
-              )}
+              <p className="text-xs text-emerald-400 font-bold">🎉 All {questions.length} canonical interview questions concluded successfully!</p>
+              <button
+                onClick={handleGenerateEvaluationReport}
+                className="w-full py-2.5 bg-emerald-500 hover:bg-emerald-600 text-zinc-950 rounded-xl font-bold uppercase text-xs tracking-wider transition-all flex items-center justify-center gap-1 cursor-pointer shadow-lg shadow-emerald-500/10"
+              >
+                <ClipboardCheck className="w-4 h-4" />
+                Assess & View Feedback Report
+              </button>
             </div>
           )}
 
           {/* Interactive Keyboard Submission Input */}
-          {currentQuestionIndex < 8 && !loadingQuestions && (
+          {currentQuestionIndex < questions.length && !loadingQuestions && (
             <div className="p-3 border-t border-zinc-800 bg-zinc-950/60 flex items-center gap-2.5">
+               <button 
+                 onClick={toggleListen}
+                 className={`p-2.5 rounded-xl transition-colors cursor-pointer shrink-0 shadow-sm ${isListeningSTT ? 'bg-red-500 hover:bg-red-600 animate-pulse' : 'bg-cyan-500 hover:bg-cyan-600'}`}
+               >
+                 {isListeningSTT ? <MicOff className="w-3.5 h-3.5 fill-zinc-950" /> : <Mic className="w-3.5 h-3.5 fill-zinc-950" />}
+               </button>
                <input
                  type="text"
                  value={inputText}
                  onChange={(e) => setInputText(e.target.value)}
                  onKeyDown={(e) => e.key === 'Enter' && handleUserMessage(inputText)}
-                 placeholder="Type your answer and press Enter..."
+                 placeholder={isListeningSTT ? "Listening (speaking now)..." : "Type your answer or use microphone..."}
                  className="flex-1 bg-transparent border-none text-zinc-350 text-xs outline-none px-2 placeholder-zinc-500"
-                 disabled={isGenerating || loadingQuestions}
+                 disabled={isGenerating || loadingQuestions || isListeningSTT}
                />
                <button 
                  onClick={handleSkipQuestion}
                  className="text-[9px] px-2 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-400 uppercase font-black tracking-wider transition-colors"
                  title="Skip question"
-                 disabled={loadingQuestions}
+                 disabled={loadingQuestions || isListeningSTT}
                >
                  skip
                </button>
                <button 
                  onClick={() => handleUserMessage(inputText)}
-                 disabled={!inputText.trim() || isGenerating || loadingQuestions}
+                 disabled={!inputText.trim() || isGenerating || loadingQuestions || isListeningSTT}
                  className="p-2.5 rounded-xl bg-cyan-500 hover:bg-cyan-600 disabled:opacity-30 disabled:hover:bg-cyan-500 text-zinc-950 disabled:cursor-not-allowed transition-colors cursor-pointer shrink-0 shadow-sm"
                >
                  <Send className="w-3.5 h-3.5 fill-zinc-950" />
@@ -2229,53 +2565,152 @@ export default function Interview() {
         />
 
       ) : (
-        <div className="absolute inset-0 bg-zinc-950 flex flex-col items-center justify-center p-6 text-center select-none overflow-hidden">
-          {/* Elegant background lighting effect */}
-          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[350px] rounded-full bg-cyan-500/10 blur-[120px] pointer-events-none" />
-          
-          <div className="max-w-md w-full space-y-6 relative z-10 p-8 rounded-2xl border border-zinc-805 bg-zinc-900/60 backdrop-blur-md">
-            <div className="mx-auto w-16 h-16 rounded-full bg-cyan-950/50 border border-cyan-500/30 flex items-center justify-center text-cyan-400">
-              <Layers className="w-8 h-8 animate-pulse text-cyan-400" />
+        <div className="absolute inset-0 bg-[#f8fafc] flex flex-col z-20 pointer-events-auto overflow-y-auto">
+          {/* 1. Dynamic Header matching reference image */}
+          <InterviewHeader
+            company={targetCompany}
+            role={targetRole}
+            setId={activeSetId}
+            currentQuestionIndex={currentQuestionIndex}
+            totalQuestions={questions.length}
+            timeLeft={timeLeft}
+            isLiveConnected={geminiLiveClient?.isConnected() ?? false}
+            onEndInterview={handleEndInterview}
+          />
+
+          {/* 2. Main 3-Column Responsive Grid matching reference image visual hierarchy */}
+          <main className="flex-1 p-4 md:p-6 max-w-[1600px] w-full mx-auto grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
+            {/* LEFT COLUMN: AI Interviewer Avatar + Audio Waveform & Status */}
+            <div className="xl:col-span-3 flex flex-col gap-4">
+              <AIInterviewerCard
+                isSpeaking={isSpeaking}
+                avatarState={avatarState}
+                company={targetCompany}
+                onToggleSpeaking={handleToggleSpeaking}
+                onReplayVoice={() => {
+                  const activeQ = questions[currentQuestionIndex];
+                  if (activeQ) {
+                    const qText = activeQ.question_text || activeQ.question;
+                    speakText(qText);
+                  }
+                }}
+              />
+
+              {/* Optional Candidate Live Webcam Stream */}
+              {isCameraOn && (
+                <div className="w-full bg-white border border-gray-200/90 rounded-2xl p-3 shadow-xs relative overflow-hidden">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[11px] font-bold text-gray-700 uppercase tracking-wider flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                      Candidate Camera
+                    </span>
+                  </div>
+                  <video
+                    ref={videoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    className="w-full rounded-xl aspect-video object-cover bg-gray-900 border border-gray-200"
+                  />
+                </div>
+              )}
             </div>
 
-            <div className="space-y-2">
-              <h3 className="text-xl font-bold text-zinc-100 tracking-tight">Interactive Boardroom Simulation</h3>
-              <p className="text-zinc-400 text-xs leading-relaxed">
-                Newyatra AI has automatically activated the **2D Desktop Workspace Console** because WebGL acceleration is unavailable in this environment.
-              </p>
+            {/* MIDDLE COLUMN: Question Card + Dual Separate Transcripts + Voice Controls */}
+            <div className="xl:col-span-6 flex flex-col gap-5">
+              {currentQuestionIndex < questions.length ? (
+                <>
+                  {/* Canonical Question Card with Metadata & Source Provenance */}
+                  <CanonicalQuestionCard
+                    question={questions[currentQuestionIndex]}
+                    index={currentQuestionIndex}
+                    totalQuestions={questions.length}
+                    role={targetRole}
+                    company={targetCompany}
+                    codeValue={codeAnswers[questions[currentQuestionIndex]?.question_id] || '// Write your code here...'}
+                    onCodeChange={(val) => {
+                      const qId = questions[currentQuestionIndex]?.question_id;
+                      if (qId) {
+                        setCodeAnswers(prev => ({ ...prev, [qId]: val }));
+                      }
+                    }}
+                  />
+
+                  {/* Dual Separate Transcripts: AI Spoken Transcript vs Candidate Live Speech Transcript */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Left: AI Spoken Transcript Only */}
+                    <AITranscriptCard
+                      spokenText={aiSpeech || questions[currentQuestionIndex]?.question_text || questions[currentQuestionIndex]?.question || ""}
+                      duration="00:00 - 00:08"
+                      isSpeaking={isSpeaking}
+                    />
+
+                    {/* Right: Candidate Live Speech Transcript Only */}
+                    <CandidateTranscriptCard
+                      liveTranscript={liveFinalTranscript}
+                      interimTranscript={liveInterimTranscript}
+                      isMicOn={isMicOn}
+                      duration="00:00 - 00:14"
+                    />
+                  </div>
+
+                  {/* Dynamic Voice Controls & Action Submissions */}
+                  <VoiceControls
+                    isMicOn={isMicOn}
+                    onToggleMic={toggleListen}
+                    isCameraOn={isCameraOn}
+                    onToggleCamera={toggleCamera}
+                    onSubmitAnswer={() => {
+                      const ans = (liveFinalTranscript + ' ' + liveInterimTranscript).trim() || inputText.trim();
+                      if (ans) {
+                        handleUserMessage(ans);
+                      }
+                    }}
+                    onSkipQuestion={handleSkipQuestion}
+                    canSubmit={Boolean((liveFinalTranscript + ' ' + liveInterimTranscript).trim() || inputText.trim())}
+                    inputText={inputText}
+                    onInputTextChange={(val) => {
+                      setInputText(val);
+                      setLiveFinalTranscript(val);
+                    }}
+                    disabled={loadingQuestions || isEvaluatingAnswer}
+                  />
+                </>
+              ) : (
+                /* Completed State Screen */
+                <div className="w-full bg-white border border-gray-200/90 rounded-2xl p-10 shadow-xs flex flex-col items-center justify-center text-center space-y-5">
+                  <div className="w-16 h-16 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center shadow-xs">
+                    <CheckCircle className="w-8 h-8" />
+                  </div>
+                  <div>
+                    <h2 className="text-2xl font-black text-gray-900 tracking-tight">
+                      Interview Concluded
+                    </h2>
+                    <p className="text-sm text-gray-600 max-w-md mx-auto mt-2 leading-relaxed">
+                      You have answered all {questions.length} canonical interview questions. The AI is ready to synthesize your placement referral evaluation report.
+                    </p>
+                  </div>
+                  <button
+                    onClick={handleGenerateEvaluationReport}
+                    className="py-3.5 px-8 rounded-xl bg-blue-600 hover:bg-blue-700 active:scale-95 text-white text-xs font-bold uppercase tracking-wider shadow-md transition-all flex items-center gap-2 cursor-pointer"
+                  >
+                    <ClipboardCheck className="w-4 h-4" />
+                    <span>Assess & View Final Report</span>
+                  </button>
+                </div>
+              )}
             </div>
 
-            <div className="bg-zinc-950/80 border border-zinc-800/80 p-4 rounded-xl text-left space-y-3 font-mono text-[10px]">
-              <div className="flex justify-between border-b border-zinc-900 pb-1.5 text-zinc-500 font-bold">
-                <span>SYSTEM PARAMETER</span>
-                <span>STATUS</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-zinc-500 font-semibold">Active Evaluator:</span>
-                <span className="text-cyan-400 font-bold">Naya AI (Coaching Mode)</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-zinc-500 font-semibold">Target Enterprise:</span>
-                <span className="text-zinc-300 font-semibold">{targetCompany || "Niya AI"}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-zinc-500 font-semibold">Target Role:</span>
-                <span className="text-zinc-300 font-semibold">{targetRole || "Software Engineer"}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-zinc-500 font-semibold">A-Frame Engine:</span>
-                <span className="text-amber-500 font-semibold">Standby (Non-WebGL Context)</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-zinc-500 font-semibold">Voice Synthesis:</span>
-                <span className="text-emerald-400 font-bold">Fully Online & Connected</span>
-              </div>
+            {/* RIGHT COLUMN: Dynamic Canonical Question Queue Grouped By Rounds */}
+            <div className="xl:col-span-3 flex flex-col h-[calc(100vh-110px)] sticky top-20">
+              <QuestionQueue
+                questions={questions}
+                currentQuestionIndex={currentQuestionIndex}
+                answers={answers}
+                onSelectQuestion={handleSelectQuestion}
+              />
             </div>
-
-            <div className="text-[10px] text-zinc-500">
-              Real-time speech chat and question pipelines are fully active and synchronized in the dashboard sidebar.
-            </div>
-          </div>
+          </main>
         </div>
       )}
     </div>

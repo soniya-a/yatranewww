@@ -16,6 +16,7 @@ import { CandidateProfile } from "../types/candidateProfile";
 import { buildCanonicalProfile } from "../lib/profile/candidateProfileBuilder";
 import { ResumeIntelligenceDashboard } from "../components/ResumeIntelligenceDashboard";
 import { ResumeIntelligenceData } from "../lib/resume/resumeSchema";
+import { getStableJobId, persistActiveInterviewContext, ActiveInterviewContext } from "../lib/interview/interviewContext";
 
 // ── Interfaces (preserved exactly from original) ──────────────────────────────
 
@@ -108,9 +109,11 @@ export default function Home() {
   // Company & Role Selection
   const [selectedCompany, setSelectedCompany] = useState("");
   const [selectedRole, setSelectedRole] = useState("");
+  const [selectedCanonicalSetId, setSelectedCanonicalSetId] = useState<string>("");
   const [showDeepMatchModal, setShowDeepMatchModal] = useState(false);
   const [deepMatchResult, setDeepMatchResult] = useState<any>(null);
   const [isMatchingCompanies, setIsMatchingCompanies] = useState(false);
+
 
   // Roadmap
   const [selectedDuration, setSelectedDuration] = useState("30 days");
@@ -128,13 +131,24 @@ export default function Home() {
   const [userName, setUserName] = useState("Student");
 
   // Tab navigation
-  const [activeTab, setActiveTab] = useState<"home" | "resume" | "live-jobs" | "interview" | "roadmap">("home");
+  const [activeTab, setActiveTab] = useState<"home" | "resume" | "live-jobs" | "interview" | "roadmap">(() => {
+    if (typeof window !== "undefined") {
+      const urlParams = new URLSearchParams(window.location.search);
+      const tabParam = urlParams.get("tab");
+      if (tabParam === "live-jobs" || tabParam === "resume" || tabParam === "interview" || tabParam === "roadmap") {
+        return tabParam;
+      }
+    }
+    return "home";
+  });
 
   // Interview prep sub-views
   const [interviewSubView, setInterviewSubView] = useState<"prep" | "mode">("prep");
   const [selectedJobForInterview, setSelectedJobForInterview] = useState<any>(null);
   const [interviewSession, setInterviewSession] = useState<any>(null);
   const [isLoadingInterview, setIsLoadingInterview] = useState(false);
+  const [isLaunchingDirectInterview, setIsLaunchingDirectInterview] = useState(false);
+  const [directInterviewTarget, setDirectInterviewTarget] = useState<{ company: string; role: string } | null>(null);
 
   const getAuthContext = async () => {
     const { data: { session } } = await supabase.auth.getSession();
@@ -645,6 +659,11 @@ export default function Home() {
 
   // ── Prepare Interview for selected job ──────────────────────────────────
   const handlePrepareInterview = async (job: any) => {
+    if (!job) return;
+    const jobId = getStableJobId(job);
+    const company = (job.company || selectedCompany || "").trim();
+    const role = (job.title || selectedRole || "").trim();
+
     setSelectedJobForInterview(job);
     setActiveTab("interview");
     setInterviewSubView("prep");
@@ -674,8 +693,8 @@ export default function Home() {
             resumeTextSnippet: resumeInput.substring(0, 500),
           },
           selectedJob: {
-            title: job.title,
-            company: job.company,
+            title: role,
+            company: company,
             description: job.description || "",
             location: job.location || "",
             matchedSkills: job.matchedSkills || [],
@@ -688,10 +707,148 @@ export default function Home() {
         const sessionData = await res.json();
         setInterviewSession(sessionData);
       }
+
+      // Generate Canonical Interview Question Set scoped to this exact job
+      if (company && role) {
+        try {
+          const { data: { session: authSession } } = await supabase.auth.getSession();
+          const effectiveUid = authSession?.user?.id || (typeof window !== 'undefined' ? localStorage.getItem("guest_uid") : null) || "guest-user-123";
+          const canRes = await fetch("/api/interview/generate-canonical-set", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              company,
+              role,
+              jobDescription: job.description || "",
+              parsedResume: parseResult || candidateProfile || null,
+              user_id: effectiveUid
+            })
+          });
+          if (canRes.ok) {
+            const canonicalData = await canRes.json();
+            setSelectedCanonicalSetId(canonicalData.set_id);
+            localStorage.setItem(`job_canonical_set_${jobId}`, canonicalData.set_id);
+            const candidateSkillsStr = Array.isArray(candidateProfile?.skills)
+              ? candidateProfile.skills.join(", ")
+              : (candidateSkills || parseResult?.skills?.join(", ") || "");
+            persistActiveInterviewContext({
+              jobId,
+              company,
+              role,
+              jobDescription: job.description || "",
+              candidateSkills: candidateSkillsStr,
+              setId: canonicalData.set_id,
+              isVR: false,
+              resumeReference: parseResult || candidateProfile || null
+            });
+          }
+        } catch (canErr) {
+          console.warn("Canonical question set generation notice:", canErr);
+        }
+      }
     } catch (err) {
       console.error("Interview session generation failed:", err);
     } finally {
       setIsLoadingInterview(false);
+    }
+  };
+
+  // ── Direct Interview Launch (One-Click Launch from Job Card or Dashboard) ──
+  const handleDirectInterview = async (job: any, isVR: boolean = false) => {
+    if (!job) return;
+    const jobId = getStableJobId(job);
+    const company = (job.company || selectedCompany || "").trim();
+    const role = (job.title || selectedRole || "").trim();
+    const jobDescription = job.description || "";
+
+    if (!company || !role) {
+      alert("The selected job requires both a company name and role title to initialize an interview.");
+      return;
+    }
+
+    setIsLaunchingDirectInterview(true);
+    setDirectInterviewTarget({ company, role });
+
+    try {
+      // 1. Check if a canonical set is already generated and verified for this specific jobId
+      let targetSetId = localStorage.getItem(`job_canonical_set_${jobId}`) || "";
+
+      if (targetSetId) {
+        try {
+          const checkRes = await fetch(`/api/interview/question-set/${targetSetId}`);
+          if (!checkRes.ok) {
+            targetSetId = "";
+          } else {
+            const checkData = await checkRes.json();
+            // Verify context isolation: ensure cached set matches this exact company and role
+            if (
+              checkData.company?.toLowerCase() !== company.toLowerCase() ||
+              checkData.role?.toLowerCase() !== role.toLowerCase()
+            ) {
+              targetSetId = ""; // Stale cross-job set discarded
+            }
+          }
+        } catch (e) {
+          targetSetId = "";
+        }
+      }
+
+      // 2. Generate a fresh canonical question set if none exists for this exact job
+      if (!targetSetId) {
+        const { data: { session: authSession } } = await supabase.auth.getSession();
+        const effectiveUid = authSession?.user?.id || (typeof window !== 'undefined' ? localStorage.getItem("guest_uid") : null) || "guest-user-123";
+
+        const canRes = await fetch("/api/interview/generate-canonical-set", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            company,
+            role,
+            jobDescription,
+            parsedResume: parseResult || candidateProfile || null,
+            user_id: effectiveUid
+          })
+        });
+
+        if (!canRes.ok) {
+          throw new Error(`Failed to generate canonical questions for ${company} (${canRes.status})`);
+        }
+
+        const canonicalData = await canRes.json();
+        targetSetId = canonicalData.set_id;
+        localStorage.setItem(`job_canonical_set_${jobId}`, targetSetId);
+      }
+
+      // 3. Build & persist scoped context
+      const candidateSkillsStr = Array.isArray(candidateProfile?.skills)
+        ? candidateProfile.skills.join(", ")
+        : (candidateSkills || parseResult?.skills?.join(", ") || "");
+
+      const context: ActiveInterviewContext = {
+        jobId,
+        company,
+        role,
+        jobDescription,
+        candidateSkills: candidateSkillsStr,
+        setId: targetSetId,
+        isVR,
+        resumeReference: parseResult || candidateProfile || null
+      };
+
+      persistActiveInterviewContext(context);
+      setSelectedJobForInterview(job);
+      setSelectedCanonicalSetId(targetSetId);
+
+      // 4. Navigate directly to /interview with URL parameters AND state
+      navigate(`/interview?jobId=${encodeURIComponent(jobId)}&setId=${encodeURIComponent(targetSetId)}&company=${encodeURIComponent(company)}&role=${encodeURIComponent(role)}&vr=${isVR ? 'true' : 'false'}`, {
+        state: context
+      });
+    } catch (err: any) {
+      console.error("[Home] Direct interview launch failed:", err);
+      alert(`Could not start interview for ${role} at ${company}: ${err?.message || 'Network error'}`);
+    } finally {
+      setIsLaunchingDirectInterview(false);
+      setDirectInterviewTarget(null);
     }
   };
 
@@ -1173,9 +1330,9 @@ export default function Home() {
                       skills: Array.isArray(parseResult.structuredSkills)
                         ? parseResult.structuredSkills
                         : (parseResult.skills || []).map((s: string) => ({ name: s, category: "Verified Skills", evidence: s, confidence: 0.95 })),
-                      experience: Array.isArray(parseResult.experience) ? parseResult.experience : [],
-                      education: Array.isArray(parseResult.education) ? parseResult.education : [],
-                      projects: Array.isArray(parseResult.projects) ? parseResult.projects : [],
+                      experience: (Array.isArray(parseResult.experience) && parseResult.experience.length > 0) ? parseResult.experience : (candidateProfile?.experienceRecords || []),
+                      education: (Array.isArray(parseResult.education) && parseResult.education.length > 0) ? parseResult.education : (candidateProfile?.educationRecords || []),
+                      projects: (Array.isArray(parseResult.projects) && parseResult.projects.length > 0) ? parseResult.projects : (candidateProfile?.projects || []),
                       certifications: Array.isArray(parseResult.certifications) ? parseResult.certifications : [],
                       achievements: Array.isArray(parseResult.achievements) ? parseResult.achievements : []
                     } : null;
@@ -1224,6 +1381,7 @@ export default function Home() {
               <LiveJobsView
                 candidateProfile={getCandidateProfile()}
                 onPrepareInterview={handlePrepareInterview}
+                onDirectInterview={(job) => handleDirectInterview(job, false)}
               />
             </motion.div>
           )}
@@ -1355,14 +1513,23 @@ export default function Home() {
                       <button
                         onClick={() => {
                           if (selectedJobForInterview) {
-                            navigate("/interview");
+                            handleDirectInterview(selectedJobForInterview, false);
                           }
                         }}
-                        disabled={!selectedJobForInterview}
+                        disabled={!selectedJobForInterview || isLaunchingDirectInterview}
                         className="flex-1 py-3 bg-[#2563eb] hover:bg-[#1d4ed8] disabled:bg-slate-200 disabled:text-slate-400 text-white font-semibold text-sm rounded-xl shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.98]"
                       >
-                        Start Interview
-                        <ArrowRight className="w-4 h-4" />
+                        {isLaunchingDirectInterview ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            Initializing Interview...
+                          </>
+                        ) : (
+                          <>
+                            Start Interview
+                            <ArrowRight className="w-4 h-4" />
+                          </>
+                        )}
                       </button>
                       <button
                         onClick={() => setInterviewSubView("mode")}
@@ -1426,8 +1593,13 @@ export default function Home() {
                         </ul>
 
                         <button
-                          onClick={() => navigate("/interview")}
-                          className="w-full py-3 bg-[#2563eb] hover:bg-[#1d4ed8] text-white font-semibold text-sm rounded-xl shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.98]"
+                          onClick={() => {
+                            if (selectedJobForInterview) {
+                              handleDirectInterview(selectedJobForInterview, false);
+                            }
+                          }}
+                          disabled={!selectedJobForInterview || isLaunchingDirectInterview}
+                          className="w-full py-3 bg-[#2563eb] hover:bg-[#1d4ed8] disabled:opacity-50 text-white font-semibold text-sm rounded-xl shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.98]"
                         >
                           Start Standard Interview
                           <ArrowRight className="w-4 h-4" />
@@ -1462,8 +1634,13 @@ export default function Home() {
                         </ul>
 
                         <button
-                          onClick={() => navigate("/interview")}
-                          className="w-full py-3 bg-purple-600 hover:bg-purple-700 text-white font-semibold text-sm rounded-xl shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.98]"
+                          onClick={() => {
+                            if (selectedJobForInterview) {
+                              handleDirectInterview(selectedJobForInterview, true);
+                            }
+                          }}
+                          disabled={!selectedJobForInterview || isLaunchingDirectInterview}
+                          className="w-full py-3 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white font-semibold text-sm rounded-xl shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-[0.98]"
                         >
                           Launch Virtual Reality Simulated Room
                           <ArrowRight className="w-4 h-4" />
@@ -1472,6 +1649,7 @@ export default function Home() {
                     </div>
                   </motion.div>
                 )}
+
               </AnimatePresence>
             </motion.div>
           )}

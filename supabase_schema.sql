@@ -112,3 +112,75 @@ CREATE POLICY "Public access to resumes bucket"
     ON storage.objects FOR ALL
     USING (bucket_id = 'resumes')
     WITH CHECK (bucket_id = 'resumes');
+
+
+-- 5. CANONICAL INTERVIEW QUESTION SETS
+CREATE TABLE IF NOT EXISTS public.interview_question_sets (
+    set_id TEXT PRIMARY KEY,
+    company TEXT NOT NULL,
+    role TEXT NOT NULL,
+    job_description TEXT,
+    user_id TEXT DEFAULT 'guest',
+    evidence_window TEXT DEFAULT 'last_90_days',
+    rounds JSONB NOT NULL DEFAULT '[]'::jsonb,
+    questions JSONB NOT NULL DEFAULT '[]'::jsonb,
+    overall_confidence TEXT DEFAULT 'high',
+    provider TEXT DEFAULT 'gemini_grounded',
+    metadata JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Enable RLS for interview_question_sets
+ALTER TABLE public.interview_question_sets ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Public interview_question_sets read access" ON public.interview_question_sets;
+CREATE POLICY "Public interview_question_sets read access"
+    ON public.interview_question_sets FOR SELECT
+    USING (true);
+
+DROP POLICY IF EXISTS "Public interview_question_sets insert access" ON public.interview_question_sets;
+CREATE POLICY "Public interview_question_sets insert access"
+    ON public.interview_question_sets FOR INSERT
+    WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Public interview_question_sets update access" ON public.interview_question_sets;
+CREATE POLICY "Public interview_question_sets update access"
+    ON public.interview_question_sets FOR UPDATE
+    USING (true);
+
+
+-- 6. INTERVIEW SESSIONS (Active & Completed Sessions linked to Canonical Sets)
+CREATE TABLE IF NOT EXISTS public.interview_sessions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT DEFAULT 'guest',
+    question_set_id TEXT NOT NULL REFERENCES public.interview_question_sets(set_id) ON DELETE CASCADE,
+    company TEXT NOT NULL,
+    role TEXT NOT NULL,
+    current_question_id TEXT DEFAULT 'Q001',
+    current_question_order INT DEFAULT 0,
+    answers JSONB DEFAULT '{}'::jsonb,
+    is_completed BOOLEAN DEFAULT false,
+    interview_mode TEXT DEFAULT 'normal', -- 'normal' or 'vr'
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Enable RLS for interview_sessions
+ALTER TABLE public.interview_sessions ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Public interview_sessions read access" ON public.interview_sessions;
+CREATE POLICY "Public interview_sessions read access"
+    ON public.interview_sessions FOR SELECT
+    USING (true);
+
+DROP POLICY IF EXISTS "Public interview_sessions insert access" ON public.interview_sessions;
+CREATE POLICY "Public interview_sessions insert access"
+    ON public.interview_sessions FOR INSERT
+    WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Public interview_sessions update access" ON public.interview_sessions;
+CREATE POLICY "Public interview_sessions update access"
+    ON public.interview_sessions FOR UPDATE
+    USING (true);
+
+
