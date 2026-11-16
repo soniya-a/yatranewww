@@ -1,10 +1,11 @@
 import React, { useEffect, useState, useRef } from "react";
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
-import { supabase } from "./lib/supabase";
+import { supabase, clearUserSessionData } from "./lib/supabase";
 export interface AppUser {
   uid: string;
   email?: string;
   displayName?: string;
+  isAnonymous?: boolean;
   getIdToken?: () => Promise<string>;
 }
 import Home from "./pages/Home";
@@ -347,56 +348,15 @@ const GlobalNetworkGrid = () => {
 };
 
 export default function App() {
-  const [user, setUser] = useState<AppUser | null>(() => {
-    if (typeof window === "undefined") return null;
-    const guestSession = localStorage.getItem("guest_session");
-    const uid = localStorage.getItem("guest_uid") || "guest-user-123";
-    const email = localStorage.getItem("guest_email") || "soniya@yatra.ai";
-    const name = localStorage.getItem("guest_name") || "Soniya";
-
-    if (guestSession !== "false") {
-      if (!guestSession) {
-        localStorage.setItem("guest_session", "true");
-        localStorage.setItem("guest_uid", uid);
-        localStorage.setItem("guest_email", email);
-        localStorage.setItem("guest_name", name);
-      }
-      const payload = { user_id: uid };
-      const payloadB64 = btoa(JSON.stringify(payload))
-        .replace(/=/g, "")
-        .replace(/\+/g, "-")
-        .replace(/\//g, "_");
-
-      return {
-        uid,
-        email,
-        displayName: name,
-        getIdToken: async () => `header.${payloadB64}.signature`
-      };
-    }
-    return null;
-  });
-  const [loading, setLoading] = useState(false);
+  const [user, setUser] = useState<AppUser | null>(null);
+  const [loading, setLoading] = useState(true);
 
   // Authentication states
   const [isLoggingIn, setIsLoggingIn] = useState(false);
-  const [isAnonymizing, setIsAnonymizing] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
-
-  // Layout selection hooks
-  const [activeRole, setActiveRole] = useState<string>("student"); // student, lecturer, recruiter, admin
-  const [emailInput, setEmailInput] = useState<string>("jsoniyasonu0410@gmail.com");
-  const [passwordInput, setPasswordInput] = useState<string>("••••••••");
-  const [rememberMe, setRememberMe] = useState<boolean>(true);
-  const [showPassword, setShowPassword] = useState<boolean>(false);
-
-  // Success Transition States
-  const [isSuccessPreparing, setIsSuccessPreparing] = useState<boolean>(false);
-  const [scoreCounter, setScoreCounter] = useState<number>(74);
 
   // Cursor mouse tracking
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
-  const [tiltStyle, setTiltStyle] = useState({ transform: "perspective(1000px) rotateX(0deg) rotateY(0deg)", shadowX: 0, shadowY: 0 });
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
@@ -406,110 +366,143 @@ export default function App() {
     return () => window.removeEventListener("mousemove", handleMouseMove);
   }, []);
 
-  // Soft liquid tilt calculations
-  const handleCardMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
-    const card = e.currentTarget;
-    const rect = card.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    
-    const xPercent = (x / rect.width) - 0.5;
-    const yPercent = (y / rect.height) - 0.5;
-    
-    const rotateX = -(yPercent * 6).toFixed(2);
-    const rotateY = (xPercent * 6).toFixed(2);
-    
-    setTiltStyle({
-      transform: `perspective(1000px) rotateX(${rotateX}deg) rotateY(${rotateY}deg)`,
-      shadowX: -xPercent * 16,
-      shadowY: -yPercent * 16
-    });
-  };
-
-  const handleCardMouseLeave = () => {
-    setTiltStyle({
-      transform: "perspective(1000px) rotateX(0deg) rotateY(0deg)",
-      shadowX: 0,
-      shadowY: 0
-    });
-  };
-
   useEffect(() => {
     let isMounted = true;
-    // 1. Initial check for existing Supabase session or upgrade
+    // 1. Initial check for authentic Supabase session
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (!isMounted) return;
       if (session?.user) {
         setUser({
           uid: session.user.id,
-          email: session.user.email || "user@yatra.ai",
-          displayName: session.user.user_metadata?.full_name || session.user.email?.split("@")[0] || "User",
+          email: session.user.email || (session.user.is_anonymous ? "guest@yatra.ai" : "user@yatra.ai"),
+          displayName: session.user.user_metadata?.full_name || (session.user.is_anonymous ? "Guest Candidate" : session.user.email?.split("@")[0] || "User"),
+          isAnonymous: Boolean(session.user.is_anonymous),
           getIdToken: async () => session.access_token
         });
+      } else {
+        setUser(null);
       }
       setLoading(false);
     }).catch(() => {
       if (isMounted) setLoading(false);
     });
 
-    // 2. Safety timeout ensuring loading never hangs on portal initialization
-    const safetyTimer = setTimeout(() => {
-      if (isMounted) setLoading(false);
-    }, 300);
-
-    // 3. Real-time auth changes listener
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    // 2. Real-time auth changes listener
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (!isMounted) return;
       if (session?.user) {
         setUser({
           uid: session.user.id,
-          email: session.user.email || "user@yatra.ai",
-          displayName: session.user.user_metadata?.full_name || session.user.email?.split("@")[0] || "User",
+          email: session.user.email || (session.user.is_anonymous ? "guest@yatra.ai" : "user@yatra.ai"),
+          displayName: session.user.user_metadata?.full_name || (session.user.is_anonymous ? "Guest Candidate" : session.user.email?.split("@")[0] || "User"),
+          isAnonymous: Boolean(session.user.is_anonymous),
           getIdToken: async () => session.access_token
         });
-      } else if (localStorage.getItem("guest_session") !== "true") {
+      } else if (event === "SIGNED_OUT") {
+        clearUserSessionData();
+        setUser(null);
+      } else {
         setUser(null);
       }
     });
 
     return () => {
       isMounted = false;
-      clearTimeout(safetyTimer);
       subscription.unsubscribe();
     };
   }, []);
 
-  // Standard Login / Sign-up trigger
-  const handleAuthLogin = async (userInfo?: { email?: string; name?: string }) => {
+  // Standard Login / Sign-up trigger with Supabase Auth
+  const handleAuthLogin = async (credentials?: { email: string; password?: string; name?: string; mode?: "signin" | "signup" }): Promise<{ error?: string } | void> => {
     setIsLoggingIn(true);
     setAuthError(null);
 
-    const emailToUse = userInfo?.email || localStorage.getItem("guest_email") || "soniya@yatra.ai";
-    const nameToUse = userInfo?.name || emailToUse.split("@")[0] || "Soniya";
-    const uidToUse = "user-" + Date.now();
+    const emailToUse = credentials?.email?.trim();
+    const passwordToUse = credentials?.password || "";
+    const nameToUse = credentials?.name?.trim() || emailToUse?.split("@")[0] || "User";
 
-    localStorage.setItem("guest_session", "true");
-    localStorage.setItem("guest_uid", uidToUse);
-    localStorage.setItem("guest_email", emailToUse);
-    localStorage.setItem("guest_name", nameToUse);
-
-    const payload = { user_id: uidToUse };
-    const payloadB64 = btoa(JSON.stringify(payload))
-      .replace(/=/g, "")
-      .replace(/\+/g, "-")
-      .replace(/\//g, "_");
-
-    // Fast, smooth transition into the application (350ms)
-    setTimeout(() => {
-      setUser({
-        uid: uidToUse,
-        email: emailToUse,
-        displayName: nameToUse,
-        getIdToken: async () => `header.${payloadB64}.signature`
-      });
-      setIsSuccessPreparing(false);
+    if (!emailToUse) {
       setIsLoggingIn(false);
-    }, 350);
+      const msg = "Please enter your email address.";
+      setAuthError(msg);
+      return { error: msg };
+    }
+
+    if (!passwordToUse) {
+      setIsLoggingIn(false);
+      const msg = "Please enter your password.";
+      setAuthError(msg);
+      return { error: msg };
+    }
+
+    try {
+      if (credentials?.mode === "signup") {
+        if (passwordToUse.length < 6) {
+          throw new Error("Password must be at least 6 characters long.");
+        }
+        clearUserSessionData();
+        const { data, error } = await supabase.auth.signUp({
+          email: emailToUse,
+          password: passwordToUse,
+          options: {
+            data: {
+              full_name: nameToUse
+            }
+          }
+        });
+        if (error) throw error;
+        if (data.session) {
+          setUser({
+            uid: data.session.user.id,
+            email: data.session.user.email || emailToUse,
+            displayName: data.session.user.user_metadata?.full_name || nameToUse,
+            isAnonymous: false,
+            getIdToken: async () => data.session!.access_token
+          });
+        }
+        return {};
+      } else {
+        clearUserSessionData();
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email: emailToUse,
+          password: passwordToUse
+        });
+        if (error) throw error;
+        if (data.session) {
+          setUser({
+            uid: data.session.user.id,
+            email: data.session.user.email || emailToUse,
+            displayName: data.session.user.user_metadata?.full_name || emailToUse.split("@")[0] || "User",
+            isAnonymous: false,
+            getIdToken: async () => data.session!.access_token
+          });
+        }
+        return {};
+      }
+    } catch (err: any) {
+      console.warn("[Supabase Auth] Login/Signup failed:", err?.message);
+      const msg = err?.message || "Authentication failed. Please check your credentials.";
+      setAuthError(msg);
+      return { error: msg };
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
+
+  const handleForgotPassword = async (email: string): Promise<{ error?: string; message?: string }> => {
+    try {
+      const cleanEmail = email.trim();
+      if (!cleanEmail || !cleanEmail.includes("@")) {
+        return { error: "Please enter a valid email address." };
+      }
+      const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
+        redirectTo: `${window.location.origin}/`
+      });
+      if (error) throw error;
+      return { message: `Password reset instructions sent to ${cleanEmail}.` };
+    } catch (err: any) {
+      return { error: err?.message || "Failed to send password reset email." };
+    }
   };
 
   const handleGoogleLogin = async () => {
@@ -524,14 +517,39 @@ export default function App() {
       });
       if (error) throw error;
     } catch (error: any) {
-      console.warn("Supabase Google OAuth unavailable or redirected, falling back to authenticated session:", error);
-      handleAuthLogin({ email: "soniya@yatra.ai", name: "Soniya J" });
+      console.warn("Supabase Google OAuth error:", error);
+      setAuthError(error?.message || "Google sign in failed. Please try email/password.");
+    } finally {
+      setIsLoggingIn(false);
     }
   };
 
   const handleGuestLogin = async () => {
-    // Wrapper for direct anonymous sandbox explorations
-    handleAuthLogin();
+    setIsLoggingIn(true);
+    setAuthError(null);
+    try {
+      clearUserSessionData();
+      const { data, error } = await supabase.auth.signInAnonymously();
+      if (error) {
+        console.warn("[Supabase Auth] Anonymous sign-in unavailable:", error.message);
+        setAuthError("Guest/Anonymous authentication is not enabled on this Supabase project. Please sign in or create an account.");
+        return;
+      }
+      if (data.session) {
+        setUser({
+          uid: data.session.user.id,
+          email: data.session.user.email || "guest@yatra.ai",
+          displayName: data.session.user.user_metadata?.full_name || "Guest Candidate",
+          isAnonymous: true,
+          getIdToken: async () => data.session!.access_token
+        });
+      }
+    } catch (err: any) {
+      console.warn("[Supabase Auth] Guest sign-in failed:", err);
+      setAuthError("Guest authentication is unavailable. Please sign in with your email or Google.");
+    } finally {
+      setIsLoggingIn(false);
+    }
   };
 
   if (loading) {
@@ -551,9 +569,19 @@ export default function App() {
     );
   }
 
-  // Alya AI 2070 Login Experience
+  // Supabase Auth Login Experience
   if (!user) {
-    return <Login onLogin={handleAuthLogin} onGoogleLogin={handleGoogleLogin} mousePos={mousePos} isLoggingIn={isLoggingIn} />;
+    return (
+      <Login 
+        onLogin={handleAuthLogin} 
+        onGoogleLogin={handleGoogleLogin} 
+        onForgotPassword={handleForgotPassword}
+        onGuestLogin={handleGuestLogin}
+        isLoggingIn={isLoggingIn} 
+        authError={authError}
+        mousePos={mousePos} 
+      />
+    );
   }
 
   // Visual layout if user is logged in: React router dashboard views (Home / Interview)

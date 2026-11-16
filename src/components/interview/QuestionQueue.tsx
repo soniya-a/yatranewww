@@ -154,33 +154,41 @@ export const QuestionQueue: React.FC<QuestionQueueProps> = ({
                             : 'hover:bg-gray-50 border border-transparent'
                         }`}
                       >
-                        {/* Left: Question ID + Short Title */}
-                        <div className="flex items-center gap-2 min-w-0">
-                          <span className={`font-mono font-bold text-[11px] px-1.5 py-0.5 rounded ${
-                            isCurrent
-                              ? 'bg-blue-600 text-white'
-                              : isAnswered
-                              ? 'bg-gray-200 text-gray-700'
-                              : 'bg-gray-100 text-gray-500'
-                          }`}>
-                            {qId}
-                          </span>
-                          <span className={`truncate text-xs ${
-                            isCurrent
-                              ? 'font-bold text-blue-950'
-                              : isAnswered
-                              ? 'font-medium text-gray-800'
-                              : 'text-gray-600 font-normal'
-                          }`}>
-                            {shortTitle}
-                          </span>
+                        {/* Left: Question ID + Short Title + Answer preview */}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className={`font-mono font-bold text-[11px] px-1.5 py-0.5 rounded shrink-0 ${
+                              isCurrent
+                                ? 'bg-blue-600 text-white'
+                                : isAnswered
+                                ? 'bg-gray-200 text-gray-700'
+                                : 'bg-gray-100 text-gray-500'
+                            }`}>
+                              {qId}
+                            </span>
+                            <span className={`truncate text-xs ${
+                              isCurrent
+                                ? 'font-bold text-blue-950'
+                                : isAnswered
+                                ? 'font-medium text-gray-800'
+                                : 'text-gray-600 font-normal'
+                            }`}>
+                              {shortTitle}
+                            </span>
+                          </div>
+                          {isAnswered && answers[qId] && (
+                            <p className="text-[11px] text-gray-500 truncate mt-0.5 pl-0.5 font-normal">
+                              {answers[qId]}
+                            </p>
+                          )}
                         </div>
 
                         {/* Right: State indicator badge */}
                         <div className="shrink-0 flex items-center">
                           {isAnswered ? (
-                            <div className="flex items-center text-emerald-600">
-                              <CheckCircle2 className="w-4 h-4 fill-emerald-100" />
+                            <div className="flex items-center gap-1 text-emerald-600 text-[11px] font-bold">
+                              <CheckCircle2 className="w-3.5 h-3.5 fill-emerald-100" />
+                              <span>Answer Saved</span>
                             </div>
                           ) : isCurrent ? (
                             <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-100/80 border border-blue-300 text-blue-700 text-[11px] font-bold">

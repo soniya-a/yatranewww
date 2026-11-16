@@ -1,0 +1,1016 @@
+/* ─────────────────────────────────────────────────────────────
+   YATRA AUTHENTICATION PRESENTATION STYLES
+   Visual specification matching ui-preview/auth-preview.html
+───────────────────────────────────────────────────────────── */
+
+:root {
+  --yatra-bg-white: #ffffff;
+  --yatra-text-primary: #0f172a;
+  --yatra-text-secondary: #64748b;
+  --yatra-text-muted: #94a3b8;
+  --yatra-border-light: #e2e8f0;
+  --yatra-border-card: #f1f5f9;
+  --yatra-brand-blue: #2563eb;
+  --yatra-brand-indigo: #4f46e5;
+  --yatra-brand-purple: #7c3aed;
+  --yatra-success-green: #10b981;
+  --yatra-phone-width: 232px;
+  --yatra-phone-height: 472px;
+  --yatra-phone-gap: 32px;
+  --yatra-repeat-unit: 792px;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   SPLIT SCREEN CONTAINER & FLOATING CURVED CARD
+───────────────────────────────────────────────────────────── */
+.layout {
+  display: flex;
+  min-height: 100vh;
+  width: 100vw;
+  background: #ffffff;
+  position: relative;
+  overflow: hidden;
+  align-items: center;
+}
+
+/* Floating Card Left Column */
+.formColumn {
+  position: relative;
+  z-index: 30;
+  flex: 0 0 auto;
+  width: 530px;
+  max-width: 44vw;
+  min-width: 430px;
+  margin: 28px 0 28px 36px;
+  height: calc(100vh - 56px);
+  max-height: 880px;
+  min-height: 680px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  background: transparent;
+  filter: drop-shadow(0 20px 40px rgba(37, 99, 235, 0.08)) drop-shadow(0 8px 18px rgba(124, 58, 237, 0.06));
+  box-sizing: border-box;
+}
+
+/* SVG Organic Curved Background */
+.curvedPanelBg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 1;
+  pointer-events: none;
+  overflow: visible;
+}
+
+/* Inner Form Container */
+.formContainer {
+  position: relative;
+  z-index: 2;
+  width: 100%;
+  max-width: 405px;
+  padding: 38px 28px 38px 46px;
+  margin: 0;
+  box-sizing: border-box;
+}
+
+/* Brand Logo */
+.brandHeader {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.brandBadge {
+  width: 40px;
+  height: 40px;
+  background: #0284c7;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 14px -2px rgba(2, 132, 199, 0.35);
+  flex-shrink: 0;
+}
+
+.brandName {
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: #0f172a;
+}
+
+/* Headlines */
+.formTitle {
+  font-size: 38px;
+  line-height: 1.12;
+  font-weight: 800;
+  letter-spacing: -0.035em;
+  color: #0f172a;
+  margin-bottom: 10px;
+}
+
+.highlightOpportunity {
+  color: #2563eb;
+  display: inline-block;
+}
+
+.formSubtitle {
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: #64748b;
+  margin-bottom: 22px;
+  font-weight: 450;
+  max-width: 335px;
+}
+
+/* Alert Boxes */
+.errorAlert {
+  padding: 10px 14px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #b91c1c;
+  font-size: 13px;
+  border-radius: 10px;
+  margin-bottom: 14px;
+  line-height: 1.4;
+}
+
+.notifyAlert {
+  padding: 10px 14px;
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+  color: #065f46;
+  font-size: 13px;
+  border-radius: 10px;
+  margin-bottom: 14px;
+  line-height: 1.4;
+}
+
+/* Continue with Google Button */
+.btnGoogle {
+  width: 100%;
+  height: 46px;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 14px;
+  background: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #0f172a;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.03);
+}
+
+.btnGoogle:hover:not(:disabled) {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.06);
+}
+
+.btnGoogle:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+/* OR Divider */
+.dividerRow {
+  display: flex;
+  align-items: center;
+  margin: 16px 0;
+  gap: 14px;
+}
+
+.dividerLine {
+  flex: 1;
+  height: 1px;
+  background: #e2e8f0;
+}
+
+.dividerText {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: #94a3b8;
+  text-transform: uppercase;
+}
+
+/* Input Fields */
+.fieldGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.inputWrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.inputIcon {
+  position: absolute;
+  left: 16px;
+  color: #94a3b8;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.inputEye {
+  position: absolute;
+  right: 16px;
+  color: #94a3b8;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  padding: 0;
+}
+
+.inputEye:hover {
+  color: #64748b;
+}
+
+.formInput {
+  width: 100%;
+  height: 46px;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 14px;
+  padding: 0 16px 0 44px;
+  font-size: 13.5px;
+  color: #0f172a;
+  background: #ffffff;
+  outline: none;
+  font-family: inherit;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.02);
+}
+
+.formInputWithEye {
+  padding-right: 44px;
+}
+
+.formInput::placeholder {
+  color: #94a3b8;
+  font-weight: 400;
+}
+
+.formInput:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.14);
+}
+
+.formInput:disabled {
+  background: #f8fafc;
+  color: #94a3b8;
+}
+
+/* Forgot Password */
+.forgotPassRow {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 16px;
+}
+
+.forgotLink {
+  font-size: 13px;
+  font-weight: 600;
+  color: #2563eb;
+  text-decoration: none;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  transition: color 0.15s ease;
+}
+
+.forgotLink:hover {
+  text-decoration: underline;
+  color: #1d4ed8;
+}
+
+/* Submit Button (Blue-Purple Gradient) */
+.btnSubmit {
+  width: 100%;
+  height: 48px;
+  border: none;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #2563eb 0%, #4f46e5 50%, #7c3aed 100%);
+  color: #ffffff;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  box-shadow: 0 10px 24px -5px rgba(37, 99, 235, 0.45);
+  transition: all 0.25s ease;
+}
+
+.btnSubmit:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 14px 28px -5px rgba(37, 99, 235, 0.55);
+  filter: brightness(1.03);
+}
+
+.btnSubmit:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: 0 6px 16px -4px rgba(37, 99, 235, 0.45);
+}
+
+.btnSubmit:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+/* Footer text */
+.formFooter {
+  text-align: center;
+  margin-top: 20px;
+  font-size: 13.5px;
+  color: #64748b;
+}
+
+.signupLink {
+  color: #2563eb;
+  font-weight: 700;
+  text-decoration: none;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  margin-left: 4px;
+  font-size: inherit;
+}
+
+.signupLink:hover {
+  text-decoration: underline;
+}
+
+.guestRow {
+  text-align: center;
+  margin-top: 10px;
+}
+
+.guestLink {
+  font-size: 12px;
+  color: #94a3b8;
+  background: none;
+  border: none;
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+
+.guestLink:hover {
+  color: #475569;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   RIGHT PANEL: CONTINUOUS DIAGONAL PHONE SHOWCASE
+   Motion: TOP-RIGHT → BOTTOM-LEFT (SEAMLESS CONVEYOR LOOP)
+───────────────────────────────────────────────────────────── */
+.showcaseColumn {
+  flex: 1;
+  position: relative;
+  background: #ffffff;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+}
+
+.showcaseVignetteMask {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 10;
+  background: 
+    linear-gradient(to right, #ffffff 0%, rgba(255, 255, 255, 0) 5%, rgba(255, 255, 255, 0) 95%, #ffffff 100%),
+    linear-gradient(to bottom, #ffffff 0%, rgba(255, 255, 255, 0) 5%, rgba(255, 255, 255, 0) 95%, #ffffff 100%);
+}
+
+.conveyorViewport {
+  position: absolute;
+  width: 240%;
+  height: 240%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform: rotate(-13.5deg);
+  transform-origin: center center;
+}
+
+.conveyorTrack {
+  display: flex;
+  flex-direction: column;
+  gap: 34px;
+  animation: conveyorSlide 30s linear infinite;
+  will-change: transform;
+}
+
+@keyframes conveyorSlide {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+  100% {
+    transform: translate3d(-792px, 0, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .conveyorTrack {
+    animation: none;
+  }
+}
+
+.phoneStreamRow {
+  display: flex;
+  gap: 32px;
+  align-items: center;
+}
+
+.rowStaggered {
+  margin-left: -54px;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   SMARTPHONE HARDWARE MOCKUP CHASSIS
+───────────────────────────────────────────────────────────── */
+.phoneMockup {
+  width: 232px;
+  height: 472px;
+  background: #ffffff;
+  border: 3.5px solid #0f172a;
+  border-radius: 38px;
+  padding: 10px 14px 14px;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 
+    0 24px 48px -12px rgba(99, 102, 241, 0.18),
+    0 8px 24px -4px rgba(15, 23, 42, 0.08),
+    0 0 1px rgba(15, 23, 42, 0.25);
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.phoneNotch {
+  width: 68px;
+  height: 18px;
+  background: #0f172a;
+  border-radius: 20px;
+  margin: 0 auto 6px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 7px;
+}
+
+.phoneCameraDot {
+  width: 6px;
+  height: 6px;
+  background: #1e293b;
+  border-radius: 50%;
+}
+
+.phoneStatusBar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 4px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #0f172a;
+  margin-bottom: 8px;
+}
+
+.statusIcons {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.screenHeader {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.screenIconBadge {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: #f5f3ff;
+  color: #7c3aed;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.screenTitle {
+  font-size: 14px;
+  font-weight: 800;
+  color: #0f172a;
+  letter-spacing: -0.015em;
+}
+
+.screenContent {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── PHONE 1: RESUME INTELLIGENCE ── */
+.gaugeWrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  margin: 4px 0 14px;
+  position: relative;
+}
+
+.gaugeSvg {
+  width: 118px;
+  height: 118px;
+  transform: rotate(-90deg);
+}
+
+.gaugeCircleBg {
+  fill: none;
+  stroke: #f1f5f9;
+  stroke-width: 9;
+}
+
+.gaugeCircleProgress {
+  fill: none;
+  stroke: url(#greenCyanGradient);
+  stroke-width: 9;
+  stroke-linecap: round;
+  stroke-dasharray: 295;
+  stroke-dashoffset: 24;
+}
+
+.gaugeLabelCenter {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.gaugeScoreValue {
+  font-size: 26px;
+  font-weight: 800;
+  color: #0f172a;
+  line-height: 1;
+}
+
+.gaugeScoreSub {
+  font-size: 9.5px;
+  color: #64748b;
+  font-weight: 600;
+  margin-top: 3px;
+}
+
+.checklistContainer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.checklistRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #f8fafc;
+  border: 1px solid #f1f5f9;
+  padding: 8px 10px;
+  border-radius: 10px;
+}
+
+.checkLeft {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.checkBullet {
+  width: 18px;
+  height: 18px;
+  background: #10b981;
+  color: #ffffff;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.checkText {
+  font-size: 11px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.checkArrow {
+  color: #94a3b8;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+/* ── PHONE 2: AI INTERVIEW ── */
+.avatarWrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-top: 2px;
+  margin-bottom: 8px;
+}
+
+.avatarImgBox {
+  width: 112px;
+  height: 112px;
+  border-radius: 18px;
+  overflow: hidden;
+  box-shadow: 0 10px 20px -4px rgba(0, 0, 0, 0.12);
+  border: 2px solid #ffffff;
+  background: #e2e8f0;
+  position: relative;
+}
+
+.avatarImgBox img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.waveformBarBox {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3.5px;
+  height: 28px;
+  margin: 8px 0;
+}
+
+.waveBar {
+  width: 3.5px;
+  border-radius: 4px;
+  background: linear-gradient(180deg, #6366f1, #8b5cf6);
+  animation: wavePulse 1.4s ease-in-out infinite;
+}
+
+.waveBar:nth-child(1) { height: 8px; animation-delay: 0.1s; }
+.waveBar:nth-child(2) { height: 16px; animation-delay: 0.25s; }
+.waveBar:nth-child(3) { height: 24px; animation-delay: 0.4s; }
+.waveBar:nth-child(4) { height: 14px; animation-delay: 0.2s; }
+.waveBar:nth-child(5) { height: 26px; animation-delay: 0.5s; }
+.waveBar:nth-child(6) { height: 18px; animation-delay: 0.35s; }
+.waveBar:nth-child(7) { height: 22px; animation-delay: 0.15s; }
+.waveBar:nth-child(8) { height: 10px; animation-delay: 0.45s; }
+
+@keyframes wavePulse {
+  0%, 100% { transform: scaleY(0.4); opacity: 0.7; }
+  50% { transform: scaleY(1); opacity: 1; }
+}
+
+.questionSpeechBox {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 10px 12px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #0f172a;
+  line-height: 1.45;
+  text-align: center;
+  margin-bottom: 12px;
+}
+
+.micButtonRow {
+  display: flex;
+  justify-content: center;
+  margin-top: auto;
+  margin-bottom: 2px;
+}
+
+.micCircleBtn {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #4f46e5, #7c3aed);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 8px 18px -3px rgba(99, 102, 241, 0.45);
+}
+
+/* ── PHONE 3: JOB DISCOVERY ── */
+.jobCardsCol {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 6px;
+}
+
+.jobItemCard {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #ffffff;
+  border: 1px solid #f1f5f9;
+  border-radius: 14px;
+  padding: 12px 14px;
+  box-shadow: 0 4px 12px -2px rgba(0, 0, 0, 0.04);
+}
+
+.jobCardLeft {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.companyLogoSq {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: #f8fafc;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #f1f5f9;
+  flex-shrink: 0;
+}
+
+.companyInfoText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.companyNameBold {
+  font-size: 12.5px;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.roleTitleGray {
+  font-size: 10px;
+  font-weight: 600;
+  color: #64748b;
+}
+
+.jobArrowIcon {
+  color: #cbd5e1;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+/* ── PHONE 4: PERFORMANCE ANALYTICS ── */
+.analyticsGaugeProgress {
+  fill: none;
+  stroke: url(#purpleCyanGradient);
+  stroke-width: 9;
+  stroke-linecap: round;
+  stroke-dasharray: 295;
+  stroke-dashoffset: 35;
+}
+
+.skillsBarsCol {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.skillBarItem {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.skillBarLabels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.skillPercentBold {
+  color: #6366f1;
+}
+
+.skillTrackBg {
+  width: 100%;
+  height: 7px;
+  background: #f1f5f9;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.skillFillGradient {
+  height: 100%;
+  border-radius: 10px;
+  background: linear-gradient(90deg, #6366f1, #a855f7);
+}
+
+/* ── PHONE 5: CAREER ROADMAP ── */
+.roadmapTimelineCol {
+  display: flex;
+  flex-direction: column;
+  margin-top: 8px;
+  padding-left: 6px;
+}
+
+.timelineStepRow {
+  display: flex;
+  gap: 12px;
+  position: relative;
+  padding-bottom: 24px;
+}
+
+.timelineStepRow:last-child {
+  padding-bottom: 4px;
+}
+
+.timelineAxisLine {
+  position: absolute;
+  left: 11px;
+  top: 24px;
+  bottom: 0;
+  width: 2px;
+  background: #e2e8f0;
+}
+
+.stepNodeCircle {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10.5px;
+  font-weight: 800;
+  flex-shrink: 0;
+  z-index: 2;
+}
+
+.nodeCompleted {
+  background: #10b981;
+  color: #ffffff;
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.2);
+}
+
+.nodeProgress {
+  background: #2563eb;
+  color: #ffffff;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.2);
+}
+
+.nodeNext {
+  background: #a855f7;
+  color: #ffffff;
+  box-shadow: 0 0 0 3px rgba(168, 85, 247, 0.2);
+}
+
+.stepInfoCol {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.stepTitleBold {
+  font-size: 12.5px;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.statusBadgeText {
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.statusGreen { color: #10b981; }
+.statusBlue { color: #2563eb; }
+.statusPurple { color: #a855f7; }
+
+/* ── PHONE 6: VR INTERVIEW ── */
+.vrRoomPreview {
+  width: 100%;
+  height: 172px;
+  border-radius: 16px;
+  overflow: hidden;
+  margin: 6px 0 14px;
+  position: relative;
+  background: #0f172a;
+  box-shadow: 0 8px 24px -4px rgba(79, 70, 229, 0.2);
+}
+
+.vrCanvasFallback {
+  width: 100%;
+  height: 100%;
+  background: radial-gradient(circle at 50% 30%, #312e81 0%, #0f172a 100%);
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.vrHaloRing {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 84px;
+  height: 24px;
+  border: 3px solid rgba(192, 132, 252, 0.9);
+  border-radius: 50%;
+  box-shadow: 0 0 20px #c084fc, inset 0 0 10px #c084fc;
+  pointer-events: none;
+}
+
+.vrInterviewerSilhouette {
+  position: absolute;
+  bottom: 0;
+  width: 90px;
+  height: 120px;
+  border-radius: 12px 12px 0 0;
+  background: url('/avatars/mr-vinodh.png') center bottom / cover no-repeat;
+}
+
+.btnEnterVr {
+  width: 100%;
+  height: 42px;
+  border: none;
+  border-radius: 21px;
+  background: linear-gradient(135deg, #2563eb, #6366f1, #8b5cf6);
+  color: #ffffff;
+  font-size: 12.5px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  box-shadow: 0 8px 18px -4px rgba(79, 70, 229, 0.4);
+  cursor: pointer;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   RESPONSIVE BREAKPOINTS
+───────────────────────────────────────────────────────────── */
+@media (max-width: 1024px) {
+  .layout {
+    flex-direction: column;
+    overflow-x: hidden;
+    overflow-y: auto;
+    align-items: stretch;
+  }
+  .formColumn {
+    width: calc(100% - 32px);
+    max-width: 520px;
+    min-width: unset;
+    margin: 20px auto 10px auto;
+    height: auto;
+    min-height: auto;
+    background: linear-gradient(135deg, #f0f7ff 0%, #f5f3ff 50%, #eff6ff 100%);
+    border-radius: 28px;
+    border: 1.5px solid rgba(255, 255, 255, 0.9);
+    filter: drop-shadow(0 14px 28px rgba(37, 99, 235, 0.08));
+  }
+  .curvedPanelBg {
+    display: none;
+  }
+  .formContainer {
+    max-width: 100%;
+    padding: 36px 24px;
+    margin: 0 auto;
+  }
+  .showcaseColumn {
+    height: 440px;
+    flex: none;
+    width: 100%;
+    min-height: 440px;
+  }
+}

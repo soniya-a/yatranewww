@@ -44,13 +44,13 @@ export class GeminiLiveClient {
     if (typeof config === 'string') {
       this.token = config;
       this.endpoint = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained?access_token=${this.token}`;
-      this.model = "models/gemini-3.1-pro";
-      this.voiceName = "Aoede";
+      this.model = "models/gemini-3.8-live";
+      this.voiceName = "Charon";
     } else {
       this.token = config.token;
-      this.model = config.model || "models/gemini-3.1-pro";
+      this.model = config.model || "models/gemini-3.8-live";
       this.endpoint = config.endpoint || `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained?access_token=${this.token}`;
-      this.voiceName = config.voiceName || "Aoede";
+      this.voiceName = config.voiceName || "Charon";
     }
   }
 
@@ -110,7 +110,7 @@ export class GeminiLiveClient {
             },
             systemInstruction: {
               parts: [{
-                text: "You are the AI interviewer. When instructed to speak an interview question, vocalize the exact question out loud. Do not output internal thoughts, preamble, or conversational commentary. When listening to the candidate, your response MUST start with a JSON block containing the exact transcription of their answer, like: {\"transcript\": \"candidate's exact words\"}. Do NOT provide any conversational response, feedback, praise, or small talk after the transcript."
+                text: "You are the voice of an interviewer. Only vocalize the exact interview question supplied by the application. Do not listen for, transcribe, answer, evaluate, acknowledge, or conversationally respond to candidate speech. Do not add greetings, feedback, or meta-commentary."
               }]
             }
           }
@@ -235,6 +235,8 @@ export class GeminiLiveClient {
     }
 
     this.stopAudio();
+    this.isCurrentlySpeaking = true;
+    this.onSpeakingChange(true);
     this.ws?.send(JSON.stringify({
       clientContent: {
         turns: [{
@@ -273,6 +275,11 @@ export class GeminiLiveClient {
       this.micProcessor = ctx.createScriptProcessor(4096, 1, 1);
 
       this.micProcessor.onaudioprocess = (e) => {
+        // Prevent echo loop: Never stream microphone audio while interviewer is vocalizing
+        if (this.isCurrentlySpeaking || this.activeSources.length > 0) {
+          return;
+        }
+
         const inputData = e.inputBuffer.getChannelData(0);
         const pcm16 = new Int16Array(inputData.length);
         for (let i = 0; i < inputData.length; i++) {

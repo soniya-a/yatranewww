@@ -2,7 +2,7 @@
 
 This document contains the complete system prompt templates, JSON schemas, structural flows, and database designs required to build the full "NeuroView AI" platform locally (in VS Code) and scale it into a robust product.
 
-## 1. Core Database Schema (e.g., PostgreSQL / Prisma or Firestore)
+## 1. Core Database Schema (Supabase PostgreSQL)
 
 ### Users / Candidates
 - `id`: String (UUID)

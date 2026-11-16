@@ -1,8 +1,8 @@
-﻿// ESCO Skill Retriever
+// ESCO Skill Retriever
 // Grounds raw skill strings against the ESCO skills taxonomy in Supabase.
 // Reuses the existing Supabase client from src/lib/supabase.ts - never creates a second client.
 
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { supabase, isSupabaseConfigured } from '../lib/supabaseServer';
 
 /**
  * Takes a list of raw skill strings and returns ESCO-normalised preferred_label values.

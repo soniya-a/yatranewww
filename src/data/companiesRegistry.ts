@@ -472,23 +472,36 @@ export function matchResumeToRegistry(resumeText: string, searchCategory?: strin
   // Dynamic company matching & scoring
   const categoryCompanies = COMPANIES_REGISTRY.filter((comp) => comp.category === topCategory);
   const scoredCompanies = categoryCompanies.map((comp) => {
-    // Count how many requirement words match the resume text
-    const matchedReqs = comp.requirements.filter((req) => {
-      const words = req.toLowerCase().split(/[\s/()&,]+/).filter((w) => w.length > 2);
-      return words.some((w) => norm.includes(w));
-    });
+    // Identify specific individual skills from requirements that genuinely match the resume
+    const matchedSkillsForCompany: string[] = [];
+    for (const req of comp.requirements) {
+      const subparts = req.split(/\s*(?:&|\/|OR)\s*/i);
+      for (const part of subparts) {
+        const clean = part.replace(/[()]/g, '').trim();
+        if (clean.length < 2) continue;
+        const escaped = clean.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const regex = new RegExp(`(^|[^a-zA-Z0-9_])${escaped}([^a-zA-Z0-9_]|$)`, 'i');
+        if (regex.test(norm)) {
+          matchedSkillsForCompany.push(clean);
+          break;
+        }
+      }
+    }
 
     const roleWords = comp.role.toLowerCase().split(/\s+/).filter((w) => w.length > 3);
-    const roleMatched = roleWords.some((w) => norm.includes(w));
+    const roleMatched = roleWords.some((w) => {
+      const escaped = w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return new RegExp(`(^|[^a-zA-Z0-9_])${escaped}([^a-zA-Z0-9_]|$)`, 'i').test(norm);
+    });
 
     // Dynamic match score between 70% and 96%
-    const matchPoints = matchedReqs.length * 12 + (roleMatched ? 15 : 0);
+    const matchPoints = matchedSkillsForCompany.length * 12 + (roleMatched ? 15 : 0);
     const baseScore = Math.min(96, Math.max(70, 68 + matchPoints));
 
     // Dynamic reason citing the candidate's actual matched skills
     let dynamicReason = comp.reason;
-    if (matchedReqs.length > 0) {
-      dynamicReason = `Demonstrated competencies in ${matchedReqs.slice(0, 2).join(" & ")} align directly with our ${comp.role} opening.`;
+    if (matchedSkillsForCompany.length > 0) {
+      dynamicReason = `Demonstrated competencies in ${matchedSkillsForCompany.slice(0, 2).join(" & ")} align directly with our ${comp.role} opening.`;
     }
 
     return {

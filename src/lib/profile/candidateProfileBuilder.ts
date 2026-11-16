@@ -398,6 +398,7 @@ export function buildCanonicalProfile(
     certifications: Array.isArray(parseResult?.certifications) ? parseResult.certifications : undefined,
     parsedResumeIntelligence: parseResult?.profile ? parseResult : undefined,
     updatedAt: new Date().toISOString(),
-    source: "resume_upload"
+    source: "resume_upload",
+    parserSource: (parseResult?.parser_source || "gemini") as "gemini" | "local_deterministic"
   };
 }

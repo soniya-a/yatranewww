@@ -88,12 +88,5 @@
   animation: pulse_glowing 2s ease-in-out infinite;
 }
 
-/* WebXR Transparent Overlay for AR Mode */
-::xr-overlay {
-  background: transparent !important;
-}
 
-::xr-overlay > div {
-  background: transparent !important;
-}
 

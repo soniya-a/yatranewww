@@ -21,7 +21,7 @@ export const AITranscriptCard: React.FC<AITranscriptCardProps> = ({
             <Bot className="w-4 h-4" />
           </div>
           <h3 className="text-sm font-bold text-blue-700 tracking-tight">
-            AI Transcript
+            Mr. Vinodh — Hiring Manager
           </h3>
         </div>
 

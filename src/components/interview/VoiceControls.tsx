@@ -106,38 +106,22 @@ export const VoiceControls: React.FC<VoiceControlsProps> = ({
         </button>
       </div>
 
-      {/* Optional fallback text input toggle */}
+      {/* Fallback keyboard text input & live transcript edit bar */}
       <div className="w-full relative z-10 flex flex-col items-center">
-        {!showTextInput ? (
-          <button
-            onClick={() => setShowTextInput(true)}
-            className="text-[11px] text-gray-400 hover:text-blue-600 flex items-center gap-1 font-medium transition-colors cursor-pointer py-1"
-          >
-            <Edit3 className="w-3 h-3" />
-            <span>Prefer to type or edit text? Click to open keyboard input</span>
-          </button>
-        ) : (
-          <div className="w-full mt-2 flex gap-2">
-            <input
-              type="text"
-              value={inputText}
-              onChange={(e) => onInputTextChange(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && canSubmit) {
-                  onSubmitAnswer();
-                }
-              }}
-              placeholder="Type your response here or edit what was transcribed..."
-              className="flex-1 bg-gray-50 border border-gray-300 rounded-xl px-4 py-2.5 text-xs text-gray-800 outline-none focus:border-blue-500 focus:bg-white transition-colors"
-            />
-            <button
-              onClick={() => setShowTextInput(false)}
-              className="px-3 py-2 text-xs text-gray-500 hover:text-gray-700 font-semibold"
-            >
-              Hide
-            </button>
-          </div>
-        )}
+        <div className="w-full mt-1 flex gap-2">
+          <input
+            type="text"
+            value={inputText}
+            onChange={(e) => onInputTextChange(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && canSubmit && !disabled) {
+                onSubmitAnswer();
+              }
+            }}
+            placeholder="Type your answer or speak using the microphone..."
+            className="flex-1 bg-gray-50 border border-gray-300 rounded-xl px-4 py-2.5 text-xs text-gray-800 outline-none focus:border-blue-500 focus:bg-white transition-colors shadow-xs"
+          />
+        </div>
       </div>
 
       {/* Bottom Action Buttons: Submit Answer & Next + Skip Question */}

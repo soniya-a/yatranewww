@@ -36,16 +36,16 @@ Naya acts as your primary evaluator and mentor throughout the Yatranew platform.
    │                        NODE.JS EXPRESS SERVER ENTRY                    │
    │                                                                        │
    │   ┌───────────────────────┐  ┌────────────────────┐  ┌─────────────┐   │
-   │   │    GoogleGenAI SDK    │  │  Firebase Auth/Admin│  │  Error/Rate │   │
-   │   │     (Gemini API)      │  │   Verification     │  │   Limiters  │   │
+   │   │    GoogleGenAI SDK    │  │   Supabase Auth    │  │  Error/Rate │   │
+   │   │     (Gemini API)      │  │  JWT Verification  │  │   Limiters  │   │
    │   └───────────┬───────────┘  └─────────┬──────────┘  └─────────────┘   │
    └───────────────┼────────────────────────┼───────────────────────────────┘
                    │                        │
-                   ▼ (HTTPS Secure calls)   ▼ (Zero-Trust Rules)
+                   ▼ (HTTPS Secure calls)   ▼ (Zero-Trust RLS)
    ┌───────────────────────────────┐   ┌───────────────────────────┐
-   │  ✨ Gemini 3.5 Pro AI Engine  │   │ 🔥 Google Cloud Firestore │
+   │  ✨ Gemini 3.5 Pro AI Engine  │   │ ⚡ Supabase PostgreSQL    │
    │   - Resume Parsing Fallback   │   │  - Persistent Records     │
-   │   - Adaptive Quest Generator  │   │  - Privacy-Secured (PII)  │
+   │   - Adaptive Quest Generator  │   │  - Row-Level Security RLS │
    │   - Audio Answer Evaluation   │   └───────────────────────────┘
    └───────────────────────────────┘
 ```
@@ -63,8 +63,8 @@ The system implements a secure, highly modular multi-tier full-stack architectur
    - **Graceful Fallbacks Layer:** Custom token matching algorithms integrated with resume categories to protect against external rate limits and ensure offline resilience.
 
 3. **Database and Identity**
-   - **Authentication:** Firebase Auth integration (Google OAuth).
-   - **Data Layer:** Google Cloud Firestore storing structured interview session logs, user profiles, and adaptive goals securely.
+   - **Authentication:** Supabase Auth integration (Email/Password, Google OAuth).
+   - **Data Layer:** Supabase PostgreSQL storing structured interview session logs, user profiles, and adaptive goals securely with Row-Level Security (RLS).
 
 ---
 
@@ -97,8 +97,11 @@ All APIs run strictly on the server-side to guarantee client protection.
    
    # Required for Naya's core evaluation engine
    GEMINI_API_KEY=your_gemini_api_key_here
+
+   # Supabase Configuration
+   SUPABASE_URL=your_supabase_project_url
+   SUPABASE_PUBLISHABLE_KEY=your_supabase_publishable_anon_key
    ```
-   *Firebase Web Config keys are handled securely via `firebase-applet-config.json`.*
 
 3. **Run Application in Development Mode:**
    ```bash

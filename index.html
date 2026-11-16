@@ -53,6 +53,15 @@
     <!-- A-Frame VR Framework -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/aframe/1.4.2/aframe.min.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/gh/c-frame/aframe-extras@7.4.0/dist/aframe-extras.min.js" crossorigin="anonymous"></script>
+    <style>
+      /* WebXR Transparent Overlay for AR Mode (W3C standard pseudo-class) */
+      :xr-overlay {
+        background: transparent !important;
+      }
+      :xr-overlay > div {
+        background: transparent !important;
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>

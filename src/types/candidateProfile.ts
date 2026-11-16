@@ -57,6 +57,7 @@ export interface CandidateProfile {
   experienceYears: number;
   experienceLevel?: "Entry" | "Junior" | "Mid" | "Senior" | "Lead";
   achievements?: CandidateAchievement[];
+  parserSource?: "gemini" | "local_deterministic";
 
   // Extended Resume Intelligence Fields (100% backward compatible)
   headline?: string | null;

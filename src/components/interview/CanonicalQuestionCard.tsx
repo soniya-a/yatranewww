@@ -107,7 +107,7 @@ export const CanonicalQuestionCard: React.FC<CanonicalQuestionCardProps> = ({
       {/* Actual Canonical Question Text */}
       <div className="my-2">
         <h2 className="text-xl md:text-2xl font-bold text-gray-900 leading-snug tracking-tight font-sans">
-          "{questionText}"
+          {questionText}
         </h2>
       </div>
 

@@ -80,8 +80,8 @@ test.describe('Normal Voice-to-Voice Interview Flow', () => {
     await page.waitForLoadState('networkidle');
 
     // 4. Wait for Interview UI to load
-    await page.waitForSelector('text=Canonical Question Queue', { timeout: 15000 });
-    console.log('[Test] Canonical Question Queue is visible in Normal Interview Mode');
+    await page.waitForSelector('text=Interview Question Queue', { timeout: 15000 });
+    console.log('[Test] Interview Question Queue is visible in Normal Interview Mode');
 
     // Verify AI Question Card shows Q001 and the exact stored question text
     const expectedQ1Text = (q1.question_text || q1.question).trim();
@@ -100,12 +100,12 @@ test.describe('Normal Voice-to-Voice Interview Flow', () => {
     await expect(voiceStatus).toBeVisible();
 
     // 5. Test Live Microphone & Transcription Card
-    const micButton = page.locator('button:has-text("MIC MUTED"), button:has-text("MIC LIVE")').first();
+    const micButton = page.locator('button:has-text("Mic: OFF"), button:has-text("Mic: ON"), button:has-text("MIC MUTED"), button:has-text("MIC LIVE")').first();
     await expect(micButton).toBeVisible();
 
     // Type candidate response into input (simulating speech-to-text live update)
     const testCandidateAnswer = "I have extensive experience building React and Node.js microservices with real-time WebSockets.";
-    const textInput = page.locator('input[placeholder*="type/edit your response text here"]').first();
+    const textInput = page.locator('input[placeholder*="Type your answer"], input[placeholder*="type/edit your response"]').first();
     await expect(textInput).toBeVisible();
     await textInput.fill(testCandidateAnswer);
 
@@ -114,7 +114,7 @@ test.describe('Normal Voice-to-Voice Interview Flow', () => {
     await expect(liveTranscriptView).toBeVisible();
 
     // 6. Submit Answer and advance
-    const submitButton = page.locator('button:has-text("Submit Answer & Next Question")').first();
+    const submitButton = page.locator('button:has-text("Submit Answer & Next")').first();
     await expect(submitButton).toBeEnabled();
     await submitButton.click();
 

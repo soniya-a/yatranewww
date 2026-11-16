@@ -10,8 +10,9 @@ import {
   TrendingUp, AlertTriangle, Lock
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { supabase } from "../lib/supabase";
+import { supabase, clearUserSessionData } from "../lib/supabase";
 import { LiveJobsView } from "../components/LiveJobsView";
+import { CareerRoadmapView } from "../components/CareerRoadmapView";
 import { CandidateProfile } from "../types/candidateProfile";
 import { buildCanonicalProfile } from "../lib/profile/candidateProfileBuilder";
 import { ResumeIntelligenceDashboard } from "../components/ResumeIntelligenceDashboard";
@@ -72,6 +73,9 @@ interface ParsedResume {
   matchingRoles: string[];
   matchingCompanies: MatchedCompany[];
 }
+
+const MAX_RESUME_FILE_SIZE_BYTES = 10 * 1024 * 1024;
+const SUPPORTED_RESUME_EXTENSIONS = new Set(['pdf', 'docx', 'txt', 'md', 'png', 'jpg', 'jpeg', 'webp']);
 
 interface SavedInterviewReport {
   id: string;
@@ -152,15 +156,105 @@ export default function Home() {
 
   const getAuthContext = async () => {
     const { data: { session } } = await supabase.auth.getSession();
-    const uid = session?.user?.id || localStorage.getItem("guest_uid") || "guest-user-123";
+    const uid = session?.user?.id || localStorage.getItem("guest_uid") || "guest";
     const name = session?.user?.user_metadata?.full_name || localStorage.getItem("guest_name") || "Student";
     const email = session?.user?.email || localStorage.getItem("guest_email") || "Student";
-    const token = session?.access_token || (() => {
-      const payload = { user_id: uid };
-      const payloadB64 = btoa(JSON.stringify(payload)).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
-      return `header.${payloadB64}.signature`;
-    })();
+    const token = session?.access_token || "";
     return { session, uid, name, email, token };
+  };
+
+  const getScopedKey = (base: string, uid?: string | null) => {
+    return uid && uid !== "guest" && !uid.startsWith("guest_") ? `${base}_${uid}` : base;
+  };
+
+  const fetchSavedResume = async () => {
+    try {
+      const { session, uid, token } = await getAuthContext();
+      const isAuthUser = Boolean(session?.user && uid && !uid.startsWith("guest") && !localStorage.getItem("guest_session"));
+
+      // 1. If authenticated, fetch authoritative profile from database endpoint
+      if (isAuthUser && token) {
+        try {
+          const res = await fetch("/api/resume/latest", {
+            headers: { "Authorization": `Bearer ${token}` }
+          });
+          if (res.ok) {
+            const json = await res.json();
+            if (json?.profile) {
+              const row = json.profile;
+              const restoredProfile: CandidateProfile = {
+                fullName: row.candidate_name,
+                headline: row.headline,
+                domain: row.metadata?.domain || "software",
+                primaryRole: row.metadata?.primaryRole || null,
+                targetRoles: Array.isArray(row.matching_roles) ? row.matching_roles : [],
+                classificationStatus: "verified",
+                classificationConfidence: "high",
+                skills: Array.isArray(row.skills) ? row.skills : [],
+                experienceYears: row.metadata?.experienceYears || 0,
+                experienceLevel: row.metadata?.experienceLevel || "Entry",
+                contact: {
+                  location: row.location,
+                  email: row.email,
+                  phone: row.phone,
+                  linkedin: row.linkedin,
+                  github: row.github,
+                  portfolio: row.portfolio
+                },
+                educationRecords: Array.isArray(row.education) ? row.education : [],
+                experienceRecords: Array.isArray(row.experience) ? row.experience : [],
+                projects: Array.isArray(row.projects) ? row.projects : [],
+                certifications: Array.isArray(row.certifications) ? row.certifications : [],
+                achievements: Array.isArray(row.achievements) ? row.achievements : [],
+                rawResumeText: row.raw_resume_text,
+                source: "resume_upload",
+                parserSource: row.parser_source || "gemini",
+                updatedAt: row.updated_at
+              };
+              setCandidateProfile(restoredProfile);
+              if (row.raw_resume_text) setResumeInput(row.raw_resume_text);
+              if (row.skills?.length > 0) setCandidateSkills(row.skills.join(", "));
+              if (row.matching_companies?.length > 0) {
+                setSelectedRole(row.matching_companies[0].role);
+                setSelectedCompany(row.matching_companies[0].company);
+              }
+              try {
+                localStorage.setItem(getScopedKey("yatra_candidate_profile", uid), JSON.stringify(restoredProfile));
+              } catch (_) {}
+              return;
+            }
+          }
+        } catch (netErr) {
+          console.warn("[Resume Restoration] Server query offline, falling back to user-scoped cache:", netErr);
+        }
+      }
+
+      // 2. Fallback to user-scoped localStorage cache
+      const scopedKey = getScopedKey("yatra_candidate_profile", uid);
+      const cachedProfile = localStorage.getItem(scopedKey);
+      if (cachedProfile) {
+        const parsed = JSON.parse(cachedProfile);
+        setCandidateProfile(parsed);
+        if (parsed.rawResumeText) setResumeInput(parsed.rawResumeText);
+        if (parsed.skills?.length > 0) setCandidateSkills(parsed.skills.join(", "));
+      } else {
+        // Enforce clean state for new or switching accounts
+        setCandidateProfile(null);
+        setParseResult(null);
+        setResumeInput("");
+      }
+
+      const cachedParse = localStorage.getItem(getScopedKey("yatra_parse_result", uid));
+      if (cachedParse) {
+        const parsed = JSON.parse(cachedParse);
+        setParseResult(parsed);
+        if (parsed.skills?.length > 0) setCandidateSkills(parsed.skills.join(", "));
+        if (parsed.matchingCompanies?.length > 0) {
+          setSelectedRole(parsed.matchingCompanies[0].role);
+          setSelectedCompany(parsed.matchingCompanies[0].company);
+        }
+      }
+    } catch (_) {}
   };
 
   // ── Effects ──────────────────────────────────────────────────────────────
@@ -180,6 +274,18 @@ export default function Home() {
   useEffect(() => {
     fetchSavedRoadmaps();
     fetchInterviewReports();
+    fetchSavedResume();
+
+    // Restore cached selected job across reloads
+    try {
+      const cachedJob = localStorage.getItem("yatra_selected_job");
+      if (cachedJob) {
+        const parsed = JSON.parse(cachedJob);
+        setSelectedJobForInterview(parsed);
+        if (parsed.company) setSelectedCompany(parsed.company);
+        if (parsed.title || parsed.role) setSelectedRole(parsed.title || parsed.role);
+      }
+    } catch (_) {}
   }, []);
 
   // ── Business Logic Handlers (all preserved exactly) ──────────────────────
@@ -204,44 +310,88 @@ export default function Home() {
   };
 
   const handleFileClick = () => {
+    if (isParsingResume) return;
     fileInputRef.current?.click();
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (files && files.length > 0) {
-      handleFileProcessing(files[0]);
+    const file = e.target.files?.[0];
+    if (file) {
+      handleFileProcessing(file);
     }
+    e.target.value = '';
   };
 
   const handleFileProcessing = async (file: File) => {
-    // 1. Immediately clear any prior candidate profile state before processing the new document
-    setParseResult(null);
-    setMlParseResult(null);
-    setCandidateSkills("");
-    setSelectedCompany("");
-    setSelectedRole("");
-    setResumeInput("");
+    // 1. In-flight guard: prevent duplicate simultaneous uploads
+    if (isParsingResume) {
+      console.warn("[Resume Upload] Another document is currently being processed. Ignoring trigger.");
+      return;
+    }
+
     setParseError(null);
 
-    const ext = file.name.split('.').pop()?.toLowerCase();
-    if (ext === 'txt' || ext === 'md' || ext === 'json' || ext === 'csv' || ext === 'rtf') {
+    // Stash previous valid state in case validation or extraction fails
+    const prevCandidateProfile = candidateProfile;
+    const prevParseResult = parseResult;
+    const prevCandidateSkills = candidateSkills;
+    const prevSelectedCompany = selectedCompany;
+    const prevSelectedRole = selectedRole;
+    const prevResumeInput = resumeInput;
+
+    const restorePreviousOnFailure = (errorMsg: string) => {
+      setCandidateProfile(prevCandidateProfile);
+      setParseResult(prevParseResult);
+      setCandidateSkills(prevCandidateSkills);
+      setSelectedCompany(prevSelectedCompany);
+      setSelectedRole(prevSelectedRole);
+      setResumeInput(prevResumeInput);
+      setIsParsingResume(false);
+      setAiThinkingStep(0);
+      setParseError(errorMsg);
+    };
+
+    const ext = file.name.split('.').pop()?.toLowerCase() || '';
+    if (!file.size) {
+      restorePreviousOnFailure('The selected file is empty. Upload a resume with readable content.');
+      return;
+    }
+    if (file.size > MAX_RESUME_FILE_SIZE_BYTES) {
+      restorePreviousOnFailure('This resume is larger than 10 MB. Upload a smaller PDF or DOCX, or paste the resume text.');
+      return;
+    }
+    if (!SUPPORTED_RESUME_EXTENSIONS.has(ext)) {
+      restorePreviousOnFailure('Unsupported file format. Upload a PDF (.pdf), DOCX (.docx), plain text (.txt), or image (.png, .jpg). Legacy .doc files are not supported; save them as .docx first.');
+      return;
+    }
+
+    if (ext === 'txt' || ext === 'md') {
       const reader = new FileReader();
       reader.onload = (event) => {
         const text = (event.target?.result as string) || "";
+        if (!text.trim()) {
+          restorePreviousOnFailure('The selected text file has no readable resume content.');
+          return;
+        }
         setResumeInput(text);
         setParseError(null);
-        handleParseResume(text);
+        handleParseResume(text, prevCandidateProfile, prevParseResult);
       };
+      reader.onerror = () => restorePreviousOnFailure('The selected text file could not be read.');
       reader.readAsText(file);
-    } else if (ext === 'docx' || ext === 'doc') {
+    } else if (ext === 'docx') {
       setIsParsingResume(true);
       setParseError(null);
       setAiThinkingStep(1);
       setAiThinkingProgress("Uploading Word document & extracting text...");
 
       const reader = new FileReader();
+      reader.onerror = () => {
+        restorePreviousOnFailure("Could not read the selected DOCX file from disk.");
+      };
       reader.onload = async (event) => {
+        const abortCtrl = new AbortController();
+        const timeoutHandle = setTimeout(() => abortCtrl.abort(), 35000);
         try {
           const base64 = event.target?.result as string;
           const { token } = await getAuthContext();
@@ -252,39 +402,29 @@ export default function Home() {
               "Content-Type": "application/json",
               "Authorization": `Bearer ${token}`
             },
-            body: JSON.stringify({ docxBase64: base64, filename: file.name })
+            body: JSON.stringify({ docxBase64: base64, filename: file.name }),
+            signal: abortCtrl.signal
           });
+          clearTimeout(timeoutHandle);
 
           const extractData = await extractRes.json();
 
           if (!extractRes.ok || !extractData.success || !extractData.text) {
-            setParseResult(null);
-            setMlParseResult(null);
-            setCandidateSkills("");
-            setSelectedCompany("");
-            setSelectedRole("");
-            setResumeInput("");
-            setIsParsingResume(false);
-            setAiThinkingStep(0);
             const errMsg = extractData.error?.message || "We couldn't read the text from this DOCX file. Try uploading a PDF or pasting the resume text instead.";
-            setParseError(errMsg);
+            restorePreviousOnFailure(errMsg);
             return;
           }
 
           const extractedText = extractData.text;
           setResumeInput(extractedText);
           setParseError(null);
-          handleParseResume(extractedText);
+          handleParseResume(extractedText, prevCandidateProfile, prevParseResult);
         } catch (err: any) {
-          setParseResult(null);
-          setMlParseResult(null);
-          setCandidateSkills("");
-          setSelectedCompany("");
-          setSelectedRole("");
-          setResumeInput("");
-          setIsParsingResume(false);
-          setAiThinkingStep(0);
-          setParseError("We couldn't extract text from this DOCX. Try uploading a PDF or plain text instead.");
+          clearTimeout(timeoutHandle);
+          const isTimeout = err?.name === "AbortError";
+          restorePreviousOnFailure(isTimeout
+            ? "DOCX extraction timed out after 35 seconds. Please try again or paste the text."
+            : "We couldn't extract text from this DOCX. Try uploading a PDF or plain text instead.");
         }
       };
       reader.readAsDataURL(file);
@@ -308,26 +448,27 @@ export default function Home() {
         }
 
         if (!isPdfMagic) {
-          setIsParsingResume(false);
-          setAiThinkingStep(0);
-          setParseError("The selected file is not a valid PDF document. Please upload the original PDF file.");
+          restorePreviousOnFailure("The selected file is not a valid PDF document. Please upload the original PDF file.");
           return;
         }
       } catch (validationErr) {
-        setIsParsingResume(false);
-        setAiThinkingStep(0);
-        setParseError("The selected file is not a valid PDF document. Please upload the original PDF file.");
+        restorePreviousOnFailure("The selected file is not a valid PDF document. Please upload the original PDF file.");
         return;
       }
 
-      // 3. Genuine PDF validation passed -> proceed with existing extraction flow
+      // 3. Genuine PDF validation passed -> proceed with extraction flow
       setIsParsingResume(true);
       setParseError(null);
       setAiThinkingStep(1);
       setAiThinkingProgress("Uploading PDF and extracting text...");
 
       const reader = new FileReader();
+      reader.onerror = () => {
+        restorePreviousOnFailure("Could not read the selected PDF file from disk.");
+      };
       reader.onload = async (event) => {
+        const abortCtrl = new AbortController();
+        const timeoutHandle = setTimeout(() => abortCtrl.abort(), 35000);
         try {
           const base64 = event.target?.result as string;
           const { token } = await getAuthContext();
@@ -338,40 +479,29 @@ export default function Home() {
               "Content-Type": "application/json",
               "Authorization": `Bearer ${token}`
             },
-            body: JSON.stringify({ pdfBase64: base64, filename: file.name })
+            body: JSON.stringify({ pdfBase64: base64, filename: file.name }),
+            signal: abortCtrl.signal
           });
+          clearTimeout(timeoutHandle);
 
           const extractData = await extractRes.json();
 
           if (!extractRes.ok || !extractData.success || !extractData.text) {
-            // Extraction failure: ensure profile state is cleared
-            setParseResult(null);
-            setMlParseResult(null);
-            setCandidateSkills("");
-            setSelectedCompany("");
-            setSelectedRole("");
-            setResumeInput("");
-            setIsParsingResume(false);
-            setAiThinkingStep(0);
             const errMsg = extractData.error?.message || "We couldn't read the text from this PDF. Try pasting the resume text instead.";
-            setParseError(errMsg);
+            restorePreviousOnFailure(errMsg);
             return;
           }
 
           const extractedText = extractData.text;
           setResumeInput(extractedText);
           setParseError(null);
-          handleParseResume(extractedText);
+          handleParseResume(extractedText, prevCandidateProfile, prevParseResult);
         } catch (err: any) {
-          setParseResult(null);
-          setMlParseResult(null);
-          setCandidateSkills("");
-          setSelectedCompany("");
-          setSelectedRole("");
-          setResumeInput("");
-          setIsParsingResume(false);
-          setAiThinkingStep(0);
-          setParseError("We couldn't read this PDF. Try pasting the resume text instead.");
+          clearTimeout(timeoutHandle);
+          const isTimeout = err?.name === "AbortError";
+          restorePreviousOnFailure(isTimeout
+            ? "PDF extraction timed out after 35 seconds. Please try again."
+            : "We couldn't read this PDF. Try pasting the resume text instead.");
         }
       };
       reader.readAsDataURL(file);
@@ -382,7 +512,12 @@ export default function Home() {
       setAiThinkingProgress("Performing OCR on resume image...");
 
       const reader = new FileReader();
+      reader.onerror = () => {
+        restorePreviousOnFailure("Could not read the selected image file from disk.");
+      };
       reader.onload = async (event) => {
+        const abortCtrl = new AbortController();
+        const timeoutHandle = setTimeout(() => abortCtrl.abort(), 45000);
         try {
           const base64 = event.target?.result as string;
           const { token } = await getAuthContext();
@@ -393,29 +528,29 @@ export default function Home() {
               "Content-Type": "application/json",
               "Authorization": `Bearer ${token}`
             },
-            body: JSON.stringify({ imageBase64: base64, filename: file.name })
+            body: JSON.stringify({ imageBase64: base64, filename: file.name }),
+            signal: abortCtrl.signal
           });
+          clearTimeout(timeoutHandle);
 
           const extractData = await extractRes.json();
           if (!extractRes.ok || !extractData.success || !extractData.text) {
-            setParseError(extractData.error?.message || "Could not read text from this image.");
-            setIsParsingResume(false);
-            setAiThinkingStep(0);
+            restorePreviousOnFailure(extractData.error?.message || "Could not read text from this image.");
             return;
           }
           const extractedText = extractData.text;
           setResumeInput(extractedText);
           setParseError(null);
-          handleParseResume(extractedText);
+          handleParseResume(extractedText, prevCandidateProfile, prevParseResult);
         } catch (err: any) {
-          setIsParsingResume(false);
-          setAiThinkingStep(0);
-          setParseError("Image OCR processing failed. Please try again or upload a PDF/DOCX.");
+          clearTimeout(timeoutHandle);
+          const isTimeout = err?.name === "AbortError";
+          restorePreviousOnFailure(isTimeout
+            ? "Image OCR timed out after 45 seconds. Please try again or upload a PDF/DOCX."
+            : "Image OCR processing failed. Please try again or upload a PDF/DOCX.");
         }
       };
       reader.readAsDataURL(file);
-    } else {
-      setParseError("Unsupported file format. Please upload a PDF (.pdf), Word document (.docx), plain text (.txt), or image (.png, .jpg).");
     }
   };
 
@@ -495,12 +630,18 @@ export default function Home() {
     }
   };
 
-  const handleParseResume = async (overrideText?: string) => {
+  const handleParseResume = async (
+    overrideText?: string,
+    previousProfileFallback?: CandidateProfile | null,
+    previousParseFallback?: any | null
+  ) => {
     const textToParse = overrideText !== undefined ? overrideText : resumeInput;
-    if (!textToParse.trim()) return;
+    if (!textToParse.trim()) {
+      setParseError('Resume text is empty. Upload a readable document or paste your resume text.');
+      return;
+    }
     setIsParsingResume(true);
     setParseError(null);
-    setParseResult(null);
 
     const steps = [
       { step: 1, text: "Extracting skills and competencies..." },
@@ -513,30 +654,26 @@ export default function Home() {
       setTimeout(() => {
         setAiThinkingStep(s.step);
         setAiThinkingProgress(s.text);
-      }, i * 150);
+      }, i * 200);
     });
 
-    try {
-      const { token } = await getAuthContext();
+    const abortController = new AbortController();
+    const timeoutHandle = setTimeout(() => abortController.abort(), 35000);
 
-      const [parseRes, parseMlRes] = await Promise.all([
-        fetch("/api/resume/parse", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${token}`
-          },
-          body: JSON.stringify({ resumeText: textToParse })
-        }),
-        fetch("/api/resume/parse-ml", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${token}`
-          },
-          body: JSON.stringify({ resumeText: textToParse })
-        })
-      ]);
+    try {
+      const { session, uid, token } = await getAuthContext();
+
+      // Single unified call: /api/resume/parse now provides full profile AND ML metrics
+      const parseRes = await fetch("/api/resume/parse", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({ resumeText: textToParse }),
+        signal: abortController.signal
+      });
+      clearTimeout(timeoutHandle);
 
       if (!parseRes.ok) {
         let errMessage = "Resume analysis failed. Please try again.";
@@ -552,46 +689,62 @@ export default function Home() {
         throw new Error("No skills could be identified. Please verify the document has readable competencies.");
       }
 
-      let mlData = null;
-      if (parseMlRes.ok) {
-        try {
-          mlData = await parseMlRes.json();
-        } catch (_) {}
-      }
+      // Establish single source of truth canonical profile
+      const canonical = buildCanonicalProfile(data, data, textToParse);
+      canonical.parserSource = data.parser_source || "gemini";
 
       setParseError(null);
-      setTimeout(() => {
-        setParseResult(data);
-        if (mlData) {
-          setMlParseResult(mlData);
-        }
-        // Establish single source of truth canonical profile
-        const canonical = buildCanonicalProfile(data, mlData, textToParse);
-        setCandidateProfile(canonical);
+      setParseResult(data);
+      setCandidateProfile(canonical);
 
-        if (data.skills && data.skills.length > 0) {
-          setCandidateSkills(data.skills.join(", "));
-        }
-        if (data.matchingCompanies && data.matchingCompanies.length > 0) {
-          setSelectedRole(data.matchingCompanies[0].role);
-          setSelectedCompany(data.matchingCompanies[0].company);
-        }
-      }, 600);
+      // Save to user-scoped localStorage
+      try {
+        const scopedKey = getScopedKey("yatra_candidate_profile", uid);
+        const scopedParseKey = getScopedKey("yatra_parse_result", uid);
+        localStorage.setItem(scopedKey, JSON.stringify(canonical));
+        localStorage.setItem(scopedParseKey, JSON.stringify(data));
+      } catch (_) {}
+
+      if (data.skills && data.skills.length > 0) {
+        setCandidateSkills(data.skills.join(", "));
+      }
+      if (data.matchingCompanies && data.matchingCompanies.length > 0) {
+        setSelectedRole(data.matchingCompanies[0].role);
+        setSelectedCompany(data.matchingCompanies[0].company);
+      }
+
+      // Persist to Supabase candidate_profiles in background if authenticated
+      if (session?.user && uid && !uid.startsWith("guest") && token) {
+        fetch("/api/resume/save", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            profile: canonical,
+            rawResumeText: textToParse,
+            parserSource: data.parser_source || "gemini"
+          })
+        }).catch(err => console.warn("[Resume DB Persistence Notice]:", err));
+      }
 
     } catch (error: any) {
+      clearTimeout(timeoutHandle);
+      const isTimeout = error?.name === "AbortError";
       console.error("Resume analysis failed:", error);
-      setParseResult(null);
-      setMlParseResult(null);
-      setCandidateProfile(null);
-      setCandidateSkills("");
-      setSelectedCompany("");
-      setSelectedRole("");
-      setParseError(error?.message || "Resume analysis failed. Please try again.");
+
+      // Preserve previous valid profile if current parse failed
+      if (previousProfileFallback !== undefined) {
+        setCandidateProfile(previousProfileFallback);
+        setParseResult(previousParseFallback || null);
+      }
+      setParseError(isTimeout
+        ? "Resume parsing timed out after 35 seconds. Please try again."
+        : (error?.message || "Resume analysis failed. Please try again."));
     } finally {
-      setTimeout(() => {
-        setIsParsingResume(false);
-        setAiThinkingStep(0);
-      }, 650);
+      setIsParsingResume(false);
+      setAiThinkingStep(0);
     }
   };
 
@@ -665,6 +818,9 @@ export default function Home() {
     const role = (job.title || selectedRole || "").trim();
 
     setSelectedJobForInterview(job);
+    try {
+      localStorage.setItem("yatra_selected_job", JSON.stringify(job));
+    } catch (_) {}
     setActiveTab("interview");
     setInterviewSubView("prep");
     setIsLoadingInterview(true);
@@ -1102,9 +1258,12 @@ export default function Home() {
             </div>
             <button 
               onClick={async () => {
-                await supabase.auth.signOut();
-                localStorage.removeItem("guest_session");
-                localStorage.removeItem("guest_email");
+                try {
+                  await supabase.auth.signOut();
+                } catch (e) {
+                  console.warn("Supabase signout skipped:", e);
+                }
+                clearUserSessionData();
                 window.location.reload();
               }}
               className="text-xs text-[#94a3b8] hover:text-red-400 transition-colors cursor-pointer ml-2"
@@ -1143,7 +1302,7 @@ export default function Home() {
         type="file"
         ref={fileInputRef}
         className="hidden"
-        accept=".txt,.md,.pdf,.doc,.docx,.png,.jpg,.jpeg,.webp"
+        accept=".pdf,.PDF,.docx,.DOCX,.txt,.TXT,.md,.MD,.png,.PNG,.jpg,.JPG,.jpeg,.JPEG,.webp,.WEBP,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,image/*"
         onChange={handleFileChange}
       />
 
@@ -1617,14 +1776,14 @@ export default function Home() {
                           </span>
                         </div>
 
-                        <h3 className="text-xl font-bold text-[#0f172a] mb-2">Virtual Reality Simulated Room</h3>
+                        <h3 className="text-xl font-bold text-[#0f172a] mb-2">Virtual Reality Executive Room</h3>
 
                         <ul className="space-y-2 mb-6">
                           {[
-                            "Immersive 3D boardroom environment",
-                            "Realistic interviewer avatars",
-                            "Voice-based interaction with speech recognition",
-                            "Live scoring and performance report",
+                            "Executive office with Mr. Vinodh — Hiring Manager",
+                            "Floor-to-ceiling panoramic glass windows with city skyline",
+                            "Dynamic floating interview-question display & documents",
+                            "Real-time voice conversation & speech recognition",
                           ].map((feature) => (
                             <li key={feature} className="flex items-center gap-2 text-sm text-[#475569]">
                               <Check className="w-4 h-4 text-emerald-500 shrink-0" />
@@ -1664,188 +1823,26 @@ export default function Home() {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -12 }}
               transition={{ duration: 0.25 }}
-              className="max-w-6xl mx-auto px-4 md:px-8 py-8"
             >
-              <div className="mb-8">
-                <h2 className="text-2xl md:text-3xl font-extrabold text-[#0f172a]">Your Career Roadmap</h2>
-                <p className="text-sm text-[#64748b] mt-1">
-                  Personalized learning path to become a {parseResult?.matchingRoles?.[0] || selectedRole || "professional"}.
-                </p>
-              </div>
-
-              {/* Target Role Card with Mountain Graphic */}
-              <div className="bg-white rounded-2xl border border-slate-200 p-6 mb-8 shadow-sm">
-                <div className="flex flex-col md:flex-row items-center gap-6">
-                  <div className="flex-1 space-y-3">
-                    <div className="flex items-center gap-2">
-                      <Target className="w-5 h-5 text-blue-600" />
-                      <span className="text-xs font-bold text-[#64748b] uppercase tracking-wider">Target Role</span>
-                    </div>
-                    <h3 className="text-xl font-bold text-[#0f172a]">
-                      {parseResult?.matchingRoles?.[0] || selectedRole || "Upload your resume first"}
-                    </h3>
-                    <div className="flex flex-wrap gap-2">
-                      <span className="px-3 py-1 rounded-lg bg-blue-50 border border-blue-200 text-xs font-bold text-blue-700 uppercase">
-                        {getDomainFromProfile()}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="w-full md:w-64 shrink-0">
-                    <img 
-                      src="/yatra_roadmap.jpg" 
-                      alt="Career path mountain illustration" 
-                      className="w-full rounded-xl"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Three Columns */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-                {/* Your Current Skills */}
-                <div className="bg-white rounded-2xl border border-slate-200 p-6">
-                  <h4 className="text-xs font-bold text-emerald-600 uppercase tracking-wider mb-4 flex items-center gap-2">
-                    <CheckCircle className="w-4 h-4" />
-                    Your Current Skills
-                  </h4>
-                  <div className="space-y-2">
-                    {(parseResult?.skills || []).slice(0, 8).map((skill: string, i: number) => (
-                      <div key={i} className="flex items-center gap-2 text-sm text-[#334155]">
-                        <Check className="w-4 h-4 text-emerald-500 shrink-0" />
-                        {skill}
-                      </div>
-                    ))}
-                    {!parseResult?.skills?.length && (
-                      <p className="text-xs text-[#94a3b8] italic">Upload resume to see verified skills</p>
-                    )}
-                  </div>
-                  {(parseResult?.skills?.length || 0) > 0 && (
-                    <div className="mt-4 pt-3 border-t border-slate-100">
-                      <span className="text-xs font-semibold text-emerald-600">
-                        {parseResult.skills.length} Verified Skills ✓
-                      </span>
-                    </div>
-                  )}
-                </div>
-
-                {/* Priority Skill Gaps */}
-                <div className="bg-white rounded-2xl border border-slate-200 p-6">
-                  <h4 className="text-xs font-bold text-amber-600 uppercase tracking-wider mb-4 flex items-center gap-2">
-                    <AlertTriangle className="w-4 h-4" />
-                    Priority Skill Gaps
-                  </h4>
-                  <div className="space-y-2">
-                    {selectedJobForInterview?.missingSkills?.length > 0 ? (
-                      selectedJobForInterview.missingSkills.map((skill: string, i: number) => (
-                        <div key={i} className="flex items-center gap-2 text-sm text-[#334155]">
-                          <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0" />
-                          {skill}
-                        </div>
-                      ))
-                    ) : (
-                      <>
-                        {(mlParseResult?.suggested_skills || []).slice(0, 5).map((skill: string, i: number) => (
-                          <div key={i} className="flex items-center gap-2 text-sm text-[#334155]">
-                            <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0" />
-                            {skill}
-                          </div>
-                        ))}
-                        {!mlParseResult?.suggested_skills?.length && (
-                          <p className="text-xs text-[#94a3b8] italic">Select a job to see skill gaps</p>
-                        )}
-                      </>
-                    )}
-                  </div>
-                </div>
-
-                {/* Next Steps (30 Days) */}
-                <div className="bg-white rounded-2xl border border-slate-200 p-6">
-                  <h4 className="text-xs font-bold text-blue-600 uppercase tracking-wider mb-4 flex items-center gap-2">
-                    <TrendingUp className="w-4 h-4" />
-                    Next Steps (30 Days)
-                  </h4>
-                  <div className="space-y-4">
-                    {[
-                      { num: "01", text: "Strengthen core skills with practice projects" },
-                      { num: "02", text: "Learn one missing skill from gap analysis" },
-                      { num: "03", text: "Complete 3 mock interview sessions" },
-                      { num: "04", text: "Apply to 5 matched live jobs" },
-                    ].map((step) => (
-                      <div key={step.num} className="flex gap-3">
-                        <span className="text-lg font-extrabold text-blue-200">{step.num}</span>
-                        <p className="text-sm text-[#475569] leading-relaxed">{step.text}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              {/* Progress Banner */}
-              <div className="bg-gradient-to-r from-[#2563eb] to-[#7c3aed] rounded-2xl p-6 text-white shadow-lg">
-                <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-                  <div className="flex-1">
-                    <p className="text-base font-bold mb-2">You are closer to your dream career than you think.</p>
-                    <div className="w-full bg-white/20 rounded-full h-2.5 overflow-hidden">
-                      <div 
-                        className="bg-white h-full rounded-full transition-all duration-700"
-                        style={{ width: `${parseResult ? 35 : 10}%` }}
-                      />
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => {
-                      if (parseResult) handleGenerateRoadmap();
-                      else setActiveTab("resume");
-                    }}
-                    className="px-6 py-3 bg-white text-[#2563eb] font-bold text-sm rounded-xl shadow-md hover:shadow-lg transition-all cursor-pointer active:scale-[0.98] whitespace-nowrap"
-                  >
-                    {isGeneratingRoadmap ? (
-                      <span className="flex items-center gap-2">
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                        Generating...
-                      </span>
-                    ) : (
-                      "Keep Going →"
-                    )}
-                  </button>
-                </div>
-              </div>
-
-              {/* Generated Roadmap Display (if available) */}
-              {generatedRoadmap && (
-                <div className="mt-8 bg-white rounded-2xl border border-slate-200 p-6 shadow-sm">
-                  <h3 className="text-lg font-bold text-[#0f172a] mb-4">{generatedRoadmap.roadmap_title}</h3>
-                  <p className="text-sm text-[#64748b] mb-6">{generatedRoadmap.start_message}</p>
-                  
-                  {generatedRoadmap.weeks?.map((week, wi) => (
-                    <div key={wi} className="mb-6 last:mb-0">
-                      <h4 className="text-sm font-bold text-blue-700 mb-2">{week.theme}</h4>
-                      <p className="text-xs text-[#64748b] mb-3">{week.goal}</p>
-                      <div className="space-y-2">
-                        {week.days?.map((day, di) => (
-                          <div key={di} className="flex items-start gap-3 p-3 bg-slate-50 rounded-xl border border-slate-100">
-                            <span className="text-xs font-bold text-slate-400 mt-0.5">Day {day.day}</span>
-                            <div className="flex-1">
-                              <p className="text-sm font-semibold text-[#334155]">{day.topic}</p>
-                              <p className="text-xs text-[#64748b] mt-0.5">{day.what_to_do}</p>
-                              <div className="flex items-center gap-2 mt-1.5">
-                                <span className="text-[10px] px-2 py-0.5 rounded bg-blue-50 text-blue-600 font-medium">{day.resource_type}</span>
-                                <span className="text-[10px] text-slate-400">{day.estimated_time}</span>
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {roadmapError && (
-                <div className="mt-4 bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-800">
-                  {roadmapError}
-                </div>
-              )}
+              <CareerRoadmapView
+                candidateProfile={candidateProfile}
+                parseResult={parseResult}
+                selectedJob={selectedJobForInterview || (selectedCompany && selectedRole ? {
+                  company: selectedCompany,
+                  title: selectedRole,
+                  role: selectedRole,
+                  description: "",
+                  matchedSkills: [],
+                  missingSkills: []
+                } : null)}
+                savedReports={savedReports}
+                onSelectTab={setActiveTab}
+                onSelectJob={(job) => {
+                  setSelectedJobForInterview(job);
+                  setSelectedCompany(job.company);
+                  setSelectedRole(job.title || job.role);
+                }}
+              />
             </motion.div>
           )}
 

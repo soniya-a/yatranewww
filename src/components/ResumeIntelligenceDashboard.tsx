@@ -97,6 +97,13 @@ export const ResumeIntelligenceDashboard: React.FC<ResumeIntelligenceDashboardPr
               OCR Engine
             </span>
           )}
+          <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
+            (data as any).parser_source === "local_deterministic"
+              ? "bg-amber-100 text-amber-800 border border-amber-300"
+              : "bg-blue-100 text-blue-800 border border-blue-200"
+          }`}>
+            {(data as any).parser_source === "local_deterministic" ? "Deterministic Engine" : "Gemini AI"}
+          </span>
         </div>
         <div className="flex items-center gap-2">
           {onFindJobs && (

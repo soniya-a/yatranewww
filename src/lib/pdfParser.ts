@@ -3,12 +3,15 @@ import path from 'path';
 import fs from 'fs';
 import { pathToFileURL } from 'url';
 import { reorderPageItemsColumnAware } from './resume/columnDetector';
+import { rawPixelsToBmp } from './resume/scannedPdfOcr';
+import { performOcrOnImageBuffer } from './resume/ocrFallback';
 
 export interface PDFExtractionResult {
   text: string;
   numPages: number;
   charCount: number;
   parser: string;
+  hasOcr?: boolean;
 }
 
 function toPureUint8Array(input: Buffer | Uint8Array | ArrayBuffer): Uint8Array {
@@ -29,9 +32,48 @@ interface TextItemWithPos {
   height: number;
 }
 
+async function extractOcrFromPageIfImage(page: any): Promise<string> {
+  try {
+    const ops = await page.getOperatorList();
+    for (let i = 0; i < ops.fnArray.length; i++) {
+      const fn = ops.fnArray[i];
+      if (
+        fn === pdfjsLib.OPS.paintImageXObject ||
+        fn === pdfjsLib.OPS.paintInlineImageXObject
+      ) {
+        let imgObj: any = null;
+        if (fn === pdfjsLib.OPS.paintImageXObject) {
+          const imgName = ops.argsArray[i][0];
+          imgObj = await new Promise((resolve) => {
+            if (page.objs && typeof (page.objs as any).get === 'function') {
+              (page.objs as any).get(imgName, (res: any) => resolve(res));
+            } else {
+              resolve(null);
+            }
+          });
+        } else {
+          imgObj = ops.argsArray[i][0];
+        }
+
+        if (imgObj && imgObj.data && imgObj.width >= 200 && imgObj.height >= 200) {
+          const bmpBuffer = rawPixelsToBmp(imgObj.width, imgObj.height, imgObj.data, imgObj.kind);
+          const ocr = await performOcrOnImageBuffer(bmpBuffer);
+          if (ocr.text && ocr.text.trim().length > 0) {
+            return ocr.text.trim();
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("[PDF Page OCR Warning]:", err);
+  }
+  return "";
+}
+
 /**
  * Extracts full text from a PDF Buffer or Uint8Array using pdfjs-dist.
  * Preserves page ordering and layout whitespace for section detection.
+ * Automatically falls back to OCR on any page containing only scanned images.
  */
 export async function extractTextFromPDF(dataBuffer: Buffer | Uint8Array | ArrayBuffer): Promise<PDFExtractionResult> {
   const data = toPureUint8Array(dataBuffer);
@@ -51,9 +93,21 @@ export async function extractTextFromPDF(dataBuffer: Buffer | Uint8Array | Array
     useWorkerFetch: false,
   });
 
-  const pdfDocument = await loadingTask.promise;
+  let pdfDocument: any;
+  try {
+    pdfDocument = await loadingTask.promise;
+  } catch (err: any) {
+    if (err?.name === 'PasswordException' || /password/i.test(err?.message || '')) {
+      const pwdErr = new Error('This PDF is password-protected or encrypted. Please upload an unlocked PDF.');
+      (pwdErr as any).code = 'PDF_ENCRYPTED';
+      throw pwdErr;
+    }
+    throw err;
+  }
+
   const numPages = pdfDocument.numPages;
   const pageTexts: string[] = [];
+  let hasOcr = false;
 
   for (let pageNum = 1; pageNum <= numPages; pageNum++) {
     const page = await pdfDocument.getPage(pageNum);
@@ -75,6 +129,12 @@ export async function extractTextFromPDF(dataBuffer: Buffer | Uint8Array | Array
     }
 
     if (items.length === 0) {
+      // Check if page contains embedded image(s) that can be OCR'd
+      const ocrPageText = await extractOcrFromPageIfImage(page);
+      if (ocrPageText.length > 0) {
+        pageTexts.push(ocrPageText);
+        hasOcr = true;
+      }
       continue;
     }
 
@@ -136,6 +196,15 @@ export async function extractTextFromPDF(dataBuffer: Buffer | Uint8Array | Array
       }
     }
 
+    if (trimmedPage.length === 0) {
+      // Selectable items produced no usable text; try OCR on page image
+      const ocrPageText = await extractOcrFromPageIfImage(page);
+      if (ocrPageText.length > 0) {
+        trimmedPage = ocrPageText;
+        hasOcr = true;
+      }
+    }
+
     if (trimmedPage.length > 0) {
       pageTexts.push(trimmedPage);
     }
@@ -147,6 +216,7 @@ export async function extractTextFromPDF(dataBuffer: Buffer | Uint8Array | Array
     text: fullText,
     numPages,
     charCount: fullText.length,
-    parser: `pdfjs-dist@${pdfjsLib.version || '6.3.289'}`
+    parser: hasOcr ? `pdfjs-dist@${pdfjsLib.version || '6.3.289'}+tesseract.js` : `pdfjs-dist@${pdfjsLib.version || '6.3.289'}`,
+    hasOcr
   };
 }

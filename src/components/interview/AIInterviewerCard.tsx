@@ -28,8 +28,8 @@ export const AIInterviewerCard: React.FC<AIInterviewerCardProps> = ({
       {/* Avatar Container Card */}
       <div className="w-full bg-white border border-gray-200/90 rounded-2xl overflow-hidden shadow-xs relative aspect-[3/3.8] flex flex-col items-center justify-center bg-gradient-to-b from-gray-50 to-gray-100 group">
         <img
-          src="/assets/ai_interviewer_avatar.jpg"
-          alt="AI Interviewer"
+          src="/avatars/mr-vinodh.png"
+          alt="Mr. Vinodh — Hiring Manager"
           className="w-full h-full object-cover object-top transition-transform duration-500 group-hover:scale-102"
         />
 
@@ -38,7 +38,7 @@ export const AIInterviewerCard: React.FC<AIInterviewerCardProps> = ({
 
         {/* Bottom Left Badge: AI Interviewer with live waveform / mic status */}
         <div className="absolute bottom-3 left-3 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/75 backdrop-blur-md text-white text-xs font-semibold shadow-md border border-white/10">
-          <span>AI Interviewer</span>
+          <span>Mr. Vinodh — Hiring Manager</span>
           {isSpeaking ? (
             <div className="flex items-center gap-0.5 h-3 ml-0.5">
               <span className="w-0.5 bg-emerald-400 h-2.5 animate-pulse rounded-full" />

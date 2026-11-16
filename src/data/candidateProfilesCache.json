@@ -1,0 +1,10 @@
+{
+  "usr_alpha_uuid_11111": {
+    "user_id": "usr_alpha_uuid_11111",
+    "candidate_name": "Alpha Engineer",
+    "skills": [
+      "Go",
+      "Kubernetes"
+    ]
+  }
+}

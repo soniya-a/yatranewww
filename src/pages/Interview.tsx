@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { ArrowLeft, Mic, MicOff, Clock, Send, Loader2, Award, ClipboardCheck, Sparkles, Check, CheckCircle, ChevronRight, BookOpen, AlertCircle, Sun, Volume2, ZoomIn, ZoomOut, Smartphone, Layers, Radio } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -20,439 +20,15 @@ import { VoiceControls } from '../components/interview/VoiceControls';
 import { QuestionQueue } from '../components/interview/QuestionQueue';
 import { BehaviorObserver, BehaviorLog } from '../lib/interview/behaviorObserver';
 
-// Register a custom A-Frame component to bend bones & perfectly seat typical readyplayer.me standing avatars.
-if (typeof window !== 'undefined') {
-  (window as any).registerSeatedAvatar = function() {
-    if (window.AFRAME && !window.AFRAME.components['seated-avatar']) {
-      window.AFRAME.registerComponent('seated-avatar', {
-    schema: {
-      state: { type: 'string', default: 'idle' }
-    },
-    init: function () {
-      this.poseBones = this.poseBones.bind(this);
-      this.el.addEventListener('model-loaded', this.poseBones);
-      
-      // Self-contained embedded GLTF of a simple box to load natively in sandboxed environments without network access
-      const fallbackBoxGltf = {
-        asset: { version: "2.0" },
-        scenes: [{ nodes: [0] }],
-        nodes: [{ children: [1], matrix: [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0] }, { mesh: 0 }],
-        meshes: [{
-          primitives: [{
-            attributes: { NORMAL: 1, POSITION: 2 },
-            indices: 0,
-            mode: 4,
-            material: 0
-          }],
-          name: "Mesh"
-        }],
-        accessors: [
-          { bufferView: 0, byteOffset: 0, componentType: 5123, count: 36, max: [23], min: [0], type: "SCALAR" },
-          { bufferView: 1, byteOffset: 0, componentType: 5126, count: 24, max: [1.0, 1.0, 1.0], min: [-1.0, -1.0, -1.0], type: "VEC3" },
-          { bufferView: 1, byteOffset: 288, componentType: 5126, count: 24, max: [0.5, 0.5, 0.5], min: [-0.5, -0.5, -0.5], type: "VEC3" }
-        ],
-        materials: [{ name: "Red", pbrMetallicRoughness: { baseColorFactor: [0.8, 0.0, 0.0, 1.0], metallicFactor: 0.0 } }],
-        bufferViews: [
-          { buffer: 0, byteOffset: 576, byteLength: 72, target: 34963 },
-          { buffer: 0, byteOffset: 0, byteLength: 576, byteStride: 12, target: 34962 }
-        ],
-        buffers: [{
-          byteLength: 648,
-          uri: "data:application/octet-stream;base64,AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAvwAAAL8AAAA/AAAAPwAAAL8AAAA/AAAAvwAAAD8AAAA/AAAAPwAAAD8AAAA/AAAAPwAAAL8AAAA/AAAAvwAAAL8AAAA/AAAAPwAAAL8AAAC/AAAAvwAAAL8AAAC/AAAAPwAAAD8AAAA/AAAAPwAAAL8AAAA/AAAAPwAAAD8AAAC/AAAAPwAAAL8AAAC/AAAAvwAAAD8AAAA/AAAAPwAAAD8AAAA/AAAAvwAAAD8AAAC/AAAAPwAAAD8AAAC/AAAAvwAAAL8AAAA/AAAAvwAAAD8AAAA/AAAAvwAAAL8AAAC/AAAAvwAAAD8AAAC/AAAAvwAAAL8AAAC/AAAAvwAAAD8AAAC/AAAAPwAAAL8AAAC/AAAAPwAAAD8AAAC/AAABAAIAAwACAAEABAAFAAYABwAGAAUACAAJAAoACwAKAAkADAANAA4ADwAOAA0AEAARABIAEwASABEAFAAVABYAFwAWABUA"
-        }]
-      };
-      const fallbackDataUri = "data:application/json;base64," + btoa(JSON.stringify(fallbackBoxGltf));
-
-      // Fallback model URLs list if the primary URL fails to load
-      const fallbacks = [
-        "https://models.readyplayer.me/64b54e7d1872df82a7f5a9e3.glb",
-        "https://models.readyplayer.me/6487e41b9e07fb317075c3ef.glb",
-        "https://cdn.jsdelivr.net/gh/mrdoob/three.js@dev/examples/models/gltf/Soldier.glb"
-      ];
-      let attempt = 0;
-      const handleError = (err: any) => {
-        const errorMsg = err && err.message ? err.message : String(err);
-        console.warn(`[Seated Avatar Error Recovery] Failed to load model asset: ${this.el.getAttribute('src')} - Error Details: ${errorMsg}`);
-        if (attempt < fallbacks.length) {
-          const nextUrl = fallbacks[attempt];
-          attempt++;
-          console.log(`[Seated Avatar Error Recovery] Attempting automated fallback GLB #${attempt}: ${nextUrl}`);
-          this.el.setAttribute('src', nextUrl);
-        } else {
-          console.warn("[Seated Avatar Error Recovery] All avatar models failed to resolve.");
-        }
-      };
-      
-      this.el.addEventListener('gltf-model-error', handleError);
-      this.el.addEventListener('model-error', handleError);
-
-      // Instant safety cache check: if the model mesh or 3D object has already booted, pose immediately
-      if (this.el.getObject3D('mesh') || this.el.object3D) {
-        setTimeout(() => {
-          this.poseBones();
-        }, 120);
-      }
-      
-      this.nodTimer = 0;
-      this.concernedFactor = 0;
-      this.morphMeshes = [];
-      this.bones = {
-        hips: null,
-        spine: null,
-        neck: null,
-        head: null,
-        leftUpLeg: null,
-        rightUpLeg: null,
-        leftLeg: null,
-        rightLeg: null,
-        leftFoot: null,
-        rightFoot: null,
-        leftArm: null,
-        rightArm: null,
-        leftForeArm: null,
-        rightForeArm: null,
-        leftShoulder: null,
-        rightShoulder: null
-      };
-      this.baseRotations = {};
-      
-      // Realism states
-      this.blinkTimer = 0;
-      this.blinkInterval = 2.5 + Math.random() * 3.5;
-      this.gestureTimer = 0;
-      this.gestureDuration = 0;
-      this.activeGestureSide = 'none';
-    },
-    remove: function () {
-      this.el.removeEventListener('model-loaded', this.poseBones);
-    },
-    update: function (oldData) {
-      if (this.data && oldData && this.data.state !== oldData.state) {
-        console.log(`[Avatar Animation Engine] Transformed state from "${oldData.state || 'none'}" to "${this.data.state}"`);
-        // Trigger a highly responsive supportive nod when shifting to speaking/thinking
-        if (this.data.state === 'speaking' || this.data.state === 'thinking') {
-          this.nodTimer = 2.0; // nod sequence duration in seconds
-        }
-      }
-    },
-    poseBones: function () {
-      // Find the direct loaded model group representation
-      const model = this.el.getObject3D('mesh') || this.el.object3D;
-      if (!model) {
-        console.warn("[Seated Avatar Plugin] 3D mesh nodes not found yet for entity", this.el.id);
-        return;
-      }
-      
-      console.log("[Seated Avatar Plugin] skeletal humanoid bones identified. Initiating posture deformations...");
-      
-      const bones = this.bones;
-      const baseRotations = this.baseRotations;
-      let boneCount = 0;
-      this.morphMeshes = [];
-      
-      model.traverse((node: any) => {
-        if (node.isMesh && node.morphTargetDictionary && node.morphTargetInfluences) {
-          this.morphMeshes.push(node);
-        }
-        if (node.isBone) {
-          boneCount++;
-          const name = node.name.toLowerCase();
-          
-          // Classify and save bone nodes
-          if (name.includes('hips') || name.includes('mixamorighips')) bones.hips = node;
-          else if (name.includes('spine') || name.includes('mixamorigspine')) bones.spine = node;
-          else if (name.includes('neck') || name.includes('mixamorigneck')) bones.neck = node;
-          else if (name.includes('head') || name.includes('mixamorighead')) bones.head = node;
-          else if (name.includes('leftupleg') || name.includes('leftthigh') || name.includes('mixamorigleftupleg')) bones.leftUpLeg = node;
-          else if (name.includes('rightupleg') || name.includes('rightthigh') || name.includes('mixamorigrightupleg')) bones.rightUpLeg = node;
-          else if (name.includes('leftleg') || name.includes('mixamorigleftleg')) bones.leftLeg = node;
-          else if (name.includes('rightleg') || name.includes('mixamorigrightleg')) bones.rightLeg = node;
-          else if (name.includes('leftfoot') || name.includes('mixamorigleftfoot')) bones.leftFoot = node;
-          else if (name.includes('rightfoot') || name.includes('mixamorigrightfoot')) bones.rightFoot = node;
-          else if (name.includes('leftarm') || name.includes('mixamorigleftarm')) bones.leftArm = node;
-          else if (name.includes('rightarm') || name.includes('mixamorigrightarm')) bones.rightArm = node;
-          else if (name.includes('leftforearm') || name.includes('mixamorigleftforearm')) bones.leftForeArm = node;
-          else if (name.includes('rightforearm') || name.includes('mixamorigrightforearm')) bones.rightForeArm = node;
-          else if (name.includes('leftshoulder') || name.includes('mixamorigleftshoulder')) bones.leftShoulder = node;
-          else if (name.includes('rightshoulder') || name.includes('mixamorigrightshoulder')) bones.rightShoulder = node;
-          
-          // Save default coordinates
-          baseRotations[node.name] = {
-            x: node.rotation.x,
-            y: node.rotation.y,
-            z: node.rotation.z
-          };
-          
-          // Apply sitting posture
-          if (name.includes('hips') || name.includes('mixamorighips')) {
-            node.position.y = -0.32; // drop hips relative to mesh feet so it doesn't hover inside the chair
-            node.position.z = -0.12; 
-          } 
-          else if (name.includes('upleg') || name.includes('thigh') || name.includes('mixamorigleftupleg') || name.includes('mixamorigrightupleg')) {
-            node.rotation.x = -Math.PI / 2 - 0.12; 
-            if (name.includes('left')) {
-              node.rotation.y = 0.08;
-              node.rotation.z = 0.05;
-            } else {
-              node.rotation.y = -0.08;
-              node.rotation.z = -0.05;
-            }
-          } 
-          else if ((name.includes('leg') && !name.includes('up') && !name.includes('foot') && !name.includes('arm')) || name.includes('mixamorigleftleg') || name.includes('mixamorigrightleg')) {
-            node.rotation.x = Math.PI / 2 + 0.15; // 90 degree bent knees
-          } 
-          else if (name.includes('foot') || name.includes('mixamorigleftfoot') || name.includes('mixamorigrightfoot')) {
-            node.rotation.x = -0.15;
-          } 
-          else if (name.includes('spine') || name.includes('mixamorigspine')) {
-            node.rotation.x = 0.08; // lean slightly forward
-          } 
-          else if (name.includes('shoulder')) {
-            node.rotation.z = name.includes('left') ? 0.05 : -0.05;
-          } 
-          else if (name.includes('arm') && !name.includes('forearm') && !name.includes('hand') && !name.includes('upleg') && !name.includes('leg')) {
-            node.rotation.x = 0.45;
-            node.rotation.z = name.includes('left') ? 0.25 : -0.25;
-          } 
-          else if (name.includes('forearm') || name.includes('mixamorigleftforearm') || name.includes('mixamorigrightforearm')) {
-            node.rotation.x = -0.55;
-            node.rotation.y = name.includes('left') ? -0.4 : 0.4;
-            node.rotation.z = name.includes('left') ? -0.15 : 0.15;
-          }
-        }
-      });
-
-      // If bones are missing, just warn and leave the mesh as is.
-      if (boneCount === 0) {
-        console.warn("[Seated Avatar Plugin] No humanoid skeletal bones found to pose.");
-      }
-
-      console.log(`[Seated Avatar Plugin] Posture deformation complete. Registered ${boneCount} skeletal bone configurations.`);
-    },
-    tick: function (time, timeDelta) {
-      if (!this.baseRotations) return;
-      const dt = timeDelta / 1000;
-      
-      // Interpolate concerned factor smoothly
-      this.concernedFactor = this.concernedFactor || 0;
-      if (this.data.state === 'concerned') {
-        this.concernedFactor = Math.min(1.0, this.concernedFactor + dt * 2.5);
-      } else {
-        this.concernedFactor = Math.max(0.0, this.concernedFactor - dt * 2.5);
-      }
-      const concernedFactor = this.concernedFactor;
-      
-      // 1. Natural breathing loop
-      if (this.bones.spine) {
-        const targetLean = 0.08 + (concernedFactor * 0.08); // curve the back forward slightly when looking concerned/skeptical
-        const breatheX = Math.sin(time * 0.0016) * 0.012;
-        const breatheZ = Math.cos(time * 0.0011) * 0.004;
-        this.bones.spine.rotation.x = targetLean + breatheX;
-        this.bones.spine.rotation.z = breatheZ;
-      }
-      
-      if (this.bones.leftShoulder && this.bones.rightShoulder) {
-        const breatheY = Math.sin(time * 0.0016) * 0.01; // subtle shoulder chest lift with breath cycle
-        this.bones.leftShoulder.rotation.z = 0.05 + breatheY;
-        this.bones.rightShoulder.rotation.z = -0.05 - breatheY;
-      }
-      
-      // 2. Dynamic Gaze & Head Tracking looking at the Camera Rig (User)
-      if (this.bones.head) {
-        let targetAngleY = 0;
-        let targetAngleX = 0;
-        const THREE = window.THREE || (window.AFRAME && window.AFRAME.THREE);
-        
-        if (THREE) {
-          const cameraEl = this.el.sceneEl && this.el.sceneEl.querySelector('a-camera');
-          if (cameraEl && cameraEl.object3D) {
-            const cameraPos = new THREE.Vector3();
-            cameraEl.object3D.getWorldPosition(cameraPos);
-            
-            const headPos = new THREE.Vector3();
-            this.bones.head.getWorldPosition(headPos);
-            
-            // Direction from head to camera
-            const dir = new THREE.Vector3().subVectors(cameraPos, headPos).normalize();
-            
-            // Calculate relative target yaw (Y) and pitch (X)
-            // Since our entity is rotated 180 degrees in the assembly, local forward z points in opposite direction
-            targetAngleY = Math.atan2(dir.x, -dir.z);
-            targetAngleX = -Math.asin(dir.y);
-            
-            // Clamp tracking angles to natural human head rotation limits to prevent neck snapping
-            targetAngleY = Math.max(-0.55, Math.min(0.55, targetAngleY));
-            targetAngleX = Math.max(-0.35, Math.min(0.35, targetAngleX));
-          }
-        }
-
-        // Blend target look-at tracking with organic micro-tremor gaze drifts
-        const lookAroundY = targetAngleY + Math.sin(time * 0.00045) * 0.04 + Math.cos(time * 0.00015) * 0.02;
-        const lookAroundX = targetAngleX + Math.sin(time * 0.00035) * 0.025 + Math.cos(time * 0.00065) * 0.01 + (concernedFactor * 0.12);
-        const lookAroundZ = (concernedFactor * 0.08);
-        
-        // Interpolate head joints smoothly
-        this.bones.head.rotation.y += (lookAroundY - this.bones.head.rotation.y) * 0.12;
-        this.bones.head.rotation.x += (lookAroundX - this.bones.head.rotation.x) * 0.12;
-        this.bones.head.rotation.z += (lookAroundZ - this.bones.head.rotation.z) * 0.12;
-        
-        // 3. Supportive nodding loop
-        if (this.nodTimer > 0 && concernedFactor < 0.5) {
-          this.nodTimer -= dt;
-          const nodOsc = Math.abs(Math.sin(time * 0.012)) * 0.12;
-          this.bones.head.rotation.x += nodOsc;
-        }
-      }
-      
-      // 4. Subtle arm twitches / Advanced Hand Gesturing while speaking
-      this.gestureTimer = this.gestureTimer || 0;
-      this.activeGestureSide = this.activeGestureSide || 'none';
-      this.gestureDuration = this.gestureDuration || 0;
-      
-      let targetLeftArmX = 0.45;
-      let targetLeftArmY = 0.0;
-      let targetLeftArmZ = 0.25;
-      let targetLeftForeArmX = -0.55;
-      let targetLeftForeArmY = -0.4;
-      let targetLeftForeArmZ = -0.15;
-
-      let targetRightArmX = 0.45;
-      let targetRightArmY = 0.0;
-      let targetRightArmZ = -0.25;
-      let targetRightForeArmX = -0.55;
-      let targetRightForeArmY = 0.4;
-      let targetRightForeArmZ = 0.15;
-
-      if (this.data.state === 'speaking') {
-        this.gestureTimer += dt;
-        if (this.activeGestureSide === 'none') {
-          const p = Math.random();
-          if (p < 0.35) this.activeGestureSide = 'left';
-          else if (p < 0.7) this.activeGestureSide = 'right';
-          else if (p < 0.9) this.activeGestureSide = 'both';
-          else this.activeGestureSide = 'none';
-          this.gestureDuration = 2.5 + Math.random() * 3.0;
-          this.gestureTimer = 0;
-        } else if (this.gestureTimer > this.gestureDuration) {
-          this.activeGestureSide = 'none';
-          this.gestureDuration = 1.5 + Math.random() * 2.0;
-          this.gestureTimer = 0;
-        }
-      } else {
-        this.activeGestureSide = 'none';
-      }
-
-      // Compute gesture joints dynamically
-      if (this.activeGestureSide === 'left' || this.activeGestureSide === 'both') {
-        targetLeftArmX = 0.72 + Math.sin(time * 0.0035) * 0.12;
-        targetLeftArmY = -0.22 + Math.cos(time * 0.002) * 0.08;
-        targetLeftArmZ = 0.38 + Math.sin(time * 0.0025) * 0.08;
-        targetLeftForeArmX = -0.95 + Math.sin(time * 0.004) * 0.15;
-        targetLeftForeArmY = -0.55 + Math.cos(time * 0.003) * 0.1;
-      }
-      if (this.activeGestureSide === 'right' || this.activeGestureSide === 'both') {
-        targetRightArmX = 0.72 + Math.sin(time * 0.0035) * 0.12;
-        targetRightArmY = 0.22 - Math.cos(time * 0.002) * 0.08;
-        targetRightArmZ = -0.38 - Math.sin(time * 0.0025) * 0.08;
-        targetRightForeArmX = -0.95 + Math.sin(time * 0.004) * 0.15;
-        targetRightForeArmY = 0.55 - Math.cos(time * 0.003) * 0.1;
-      }
-
-      // Interpolate joint angles over time
-      const lerpa = (bone: any, targetRot: any, rate = 0.06) => {
-        if (!bone) return;
-        bone.rotation.x += (targetRot.x - bone.rotation.x) * rate;
-        if (targetRot.y !== undefined) bone.rotation.y += (targetRot.y - bone.rotation.y) * rate;
-        if (targetRot.z !== undefined) bone.rotation.z += (targetRot.z - bone.rotation.z) * rate;
-      };
-
-      lerpa(this.bones.leftArm, { x: targetLeftArmX, y: targetLeftArmY, z: targetLeftArmZ });
-      lerpa(this.bones.leftForeArm, { x: targetLeftForeArmX, y: targetLeftForeArmY, z: targetLeftForeArmZ });
-      lerpa(this.bones.rightArm, { x: targetRightArmX, y: targetRightArmY, z: targetRightArmZ });
-      lerpa(this.bones.rightForeArm, { x: targetRightForeArmX, y: targetRightForeArmY, z: targetRightForeArmZ });
-
-      // 5. Eyeblinking & Real-Time Lip Sync (Ready Player Me Apple ARKit Blendshapes)
-      this.blinkTimer -= dt;
-      if (this.blinkTimer <= 0) {
-        if (this.blinkTimer < -this.blinkInterval) {
-          this.blinkTimer = 0.15; // blink lasts 150ms
-          this.blinkInterval = 3.0 + Math.random() * 4.0; // reset next interval
-        }
-      }
-      const blinkVal = this.blinkTimer > 0 ? Math.sin((this.blinkTimer / 0.15) * Math.PI) : 0;
-
-      // Dynamic speech lip-sync variables
-      let jawOpenVal = 0;
-      let mouthOpenVal = 0;
-      if (this.data.state === 'speaking') {
-        const speechFreq = time * 0.016;
-        jawOpenVal = Math.abs(Math.sin(speechFreq) * 0.45 + Math.cos(speechFreq * 0.6) * 0.25) * 0.75;
-        mouthOpenVal = jawOpenVal * 0.9;
-        // Introduce natural pauses
-        if (Math.sin(time * 0.0032) < -0.65) {
-          jawOpenVal *= 0.05;
-          mouthOpenVal *= 0.05;
-        }
-      }
-
-      // Iterate morph meshes to execute blinking and lip movements accurately
-      if (this.morphMeshes && this.morphMeshes.length > 0) {
-        this.morphMeshes.forEach((mesh: any) => {
-          const dict = mesh.morphTargetDictionary;
-          const influences = mesh.morphTargetInfluences;
-          if (dict && influences) {
-            // Apply blendshapes
-            const blends = [
-              { key: 'mouthfrownleft', max: 0.85, val: concernedFactor * 0.85 },
-              { key: 'mouthfrownright', max: 0.85, val: concernedFactor * 0.85 },
-              { key: 'browdownleft', max: 0.75, val: concernedFactor * 0.75 },
-              { key: 'browdownright', max: 0.75, val: concernedFactor * 0.75 },
-              { key: 'browinnerup', max: 0.45, val: concernedFactor * 0.45 },
-              
-              // Eyeblink mapping
-              { key: 'eyeblinkleft', max: 1.0, val: blinkVal },
-              { key: 'eyeblinkright', max: 1.0, val: blinkVal },
-              { key: 'eyeblink_l', max: 1.0, val: blinkVal },
-              { key: 'eyeblink_r', max: 1.0, val: blinkVal },
-              { key: 'eyesclosed', max: 1.0, val: blinkVal },
-              
-              // Speech lip-sync mapping
-              { key: 'jawopen', max: 1.0, val: jawOpenVal },
-              { key: 'jaw_open', max: 1.0, val: jawOpenVal },
-              { key: 'mouthopen', max: 1.0, val: mouthOpenVal },
-              { key: 'mouth_open', max: 1.0, val: mouthOpenVal },
-              { key: 'mouthfunnel', max: 0.65, val: jawOpenVal * 0.4 },
-              { key: 'mouthpucker', max: 0.65, val: jawOpenVal * 0.3 }
-            ];
-
-            blends.forEach((b) => {
-              let idx = dict[b.key];
-              if (idx === undefined) {
-                // Try lowercase fuzzy find
-                for (const k in dict) {
-                  if (k.toLowerCase() === b.key) {
-                    idx = dict[k];
-                    break;
-                  }
-                }
-              }
-              if (idx !== undefined) {
-                const cur = influences[idx] || 0;
-                const tgt = b.val;
-                influences[idx] = cur + (tgt - cur) * 0.18; // smooth interpolation rate
-              }
-            });
-          }
-        });
-      }
-    }
-  });
-    }
-  };
-  
-}
-
 const INTERVIEWERS = [
+  {
+    id: "vinodh",
+    name: "Mr. Vinodh — Hiring Manager",
+    role: "Hiring Manager & Engineering Director",
+    url: "/avatars/mr-vinodh.png",
+    desc: "Executive hiring manager conducting the interview opposite you.",
+    img: "👨‍💼"
+  },
   {
     id: "marcus",
     name: "Marcus - Executive Recruiter",
@@ -646,6 +222,23 @@ const INTERVIEW_MODES = [
   }
 ];
 
+function isQuestionEcho(candidateText: string, activeQuestionText: string): boolean {
+  if (!candidateText || !activeQuestionText) return false;
+  const normCand = candidateText.toLowerCase().replace(/[^a-z0-9]/g, ' ').trim();
+  const normQ = activeQuestionText.toLowerCase().replace(/[^a-z0-9]/g, ' ').trim();
+  if (normCand.length < 5) return false;
+  if (normQ.includes(normCand) && normCand.length > 15) return true;
+  if (normCand.includes(normQ)) return true;
+  const qWords = new Set(normQ.split(/\s+/).filter(w => w.length > 3));
+  if (qWords.size === 0) return false;
+  const candWords = normCand.split(/\s+/).filter(w => w.length > 3);
+  let overlap = 0;
+  for (const w of candWords) {
+    if (qWords.has(w)) overlap++;
+  }
+  return candWords.length > 0 && (overlap / candWords.length) > 0.65;
+}
+
 export default function Interview() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -670,6 +263,23 @@ export default function Interview() {
   const targetRole = (queryRole || state.role || scopedContext?.role || '').trim();
   const targetJobDescription = state.jobDescription || scopedContext?.jobDescription || '';
   const candidateSkills = state.candidateSkills || scopedContext?.candidateSkills || 'React, TypeScript, Python, SQL';
+
+  // 5. Retrieve parsed resume / candidate profile from location state, scoped storage, or local storage
+  const parsedResume = useMemo(() => {
+    if (state.resumeReference) return state.resumeReference;
+    if (scopedContext?.resumeReference) return scopedContext.resumeReference;
+    if (typeof window !== 'undefined') {
+      try {
+        const storedProfile = localStorage.getItem("yatra_candidate_profile");
+        if (storedProfile) return JSON.parse(storedProfile);
+        const storedParse = localStorage.getItem("yatra_parse_result");
+        if (storedParse) return JSON.parse(storedParse);
+      } catch (e) {
+        console.warn("[Interview] Failed to read stored resume profile:", e);
+      }
+    }
+    return null;
+  }, [state.resumeReference, scopedContext?.resumeReference]);
 
   // Canonical InterviewQuestionSet ID
   const [activeSetId, setActiveSetId] = useState<string>(() => {
@@ -734,13 +344,7 @@ export default function Interview() {
     if (isVRActive) {
       const checkVR = () => {
         if (typeof window !== 'undefined' && (window as any).AFRAME) {
-          if (typeof (window as any).registerSeatedAvatar === 'function') {
-            try {
-              (window as any).registerSeatedAvatar();
-            } catch (e) {
-              console.warn("[Newyatra AI] Avatar registration retry failed:", e);
-            }
-          }
+
           return true;
         }
         return false;
@@ -903,8 +507,8 @@ export default function Interview() {
   // Interview Multi-Round State Engine
   const [selectedInterviewer, setSelectedInterviewer] = useState(INTERVIEWERS[0]);
   const [geminiLiveClient, setGeminiLiveClient] = useState<GeminiLiveClient | null>(null);
+  const hasAnnouncedInitialQuestionRef = useRef(false);
   const [isListeningSTT, setIsListeningSTT] = useState(false);
-  const recognitionRef = useRef<any>(null);
   const [currentRoundIndex, setCurrentRoundIndex] = useState(0);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   
@@ -929,6 +533,13 @@ export default function Interview() {
   const [isCameraOn, setIsCameraOn] = useState(false);
   const [activeStream, setActiveStream] = useState<MediaStream | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+
+  // Re-attach stream when entering/exiting VR mode
+  useEffect(() => {
+    if (videoRef.current && activeStream) {
+      videoRef.current.srcObject = activeStream;
+    }
+  }, [isVRActive, activeStream]);
 
   // Behavior Observation
   const [behaviorLogs, setBehaviorLogs] = useState<BehaviorLog[]>([]);
@@ -997,7 +608,6 @@ export default function Interview() {
       setCurrentQuestionIndex(idx);
       const targetQ = questions[idx];
       const targetQText = targetQ.question_text || targetQ.question;
-      setAiSpeech(targetQText);
       speakText(targetQText);
     }
   };
@@ -1025,6 +635,10 @@ export default function Interview() {
 
   const enterVRMode = () => {
     const sceneEl = document.querySelector('a-scene');
+    if (!navigator.xr) {
+      setErrorMessage('WebXR is not supported by this browser or device. You can continue in the 3D desktop room.');
+      return;
+    }
     if (sceneEl) {
       try {
         (sceneEl as any).enterVR();
@@ -1066,6 +680,7 @@ export default function Interview() {
   
   const [isGenerating, setIsGenerating] = useState(false);
   const [aiSpeech, setAiSpeech] = useState("Establishing secure audio connection with our interviewer avatar...");
+  const pendingAiSpeech = useRef<string | null>(null);
   const [inputText, setInputText] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   
@@ -1235,6 +850,27 @@ export default function Interview() {
   const [pendingFollowUp, setPendingFollowUp] = useState<string | null>(null);
   const [askedFollowUp, setAskedFollowUp] = useState(false);
 
+  // Keep a fresh reference to handleUserMessage for auto-submit from Gemini Live
+  const handleUserMessageRef = useRef<((msg: string) => Promise<void>) | null>(null);
+
+  const questionsRef = useRef(questions);
+  useEffect(() => { questionsRef.current = questions; }, [questions]);
+
+  const currentQuestionIndexRef = useRef(currentQuestionIndex);
+  useEffect(() => { currentQuestionIndexRef.current = currentQuestionIndex; }, [currentQuestionIndex]);
+
+  const latestInputTextRef = useRef(inputText);
+  useEffect(() => { latestInputTextRef.current = inputText; }, [inputText]);
+
+  const voiceAutoSubmitTimerRef = useRef<any>(null);
+  const candidateRecognitionRef = useRef<any>(null);
+  const candidateRecognitionActiveRef = useRef(false);
+  const isSubmittingAnswerRef = useRef(false);
+
+  useEffect(() => {
+    isSubmittingAnswerRef.current = false;
+  }, [currentQuestionIndex]);
+
   useEffect(() => {
     let client: GeminiLiveClient | null = null;
     const initGemini = async () => {
@@ -1261,23 +897,21 @@ export default function Interview() {
             client = new GeminiLiveClient({
               token: data.token,
               model: data.model,
-              endpoint: data.endpoint
+              endpoint: data.endpoint,
+              voiceName: "Charon"
             });
             await client.connect();
+            client.onConnectionStateChange = (state) => {
+              if (state === 'disconnected') {
+                setErrorMessage('Interviewer audio is unavailable. The active question remains visible; reconnect or use the text controls to continue.');
+              }
+            };
             client.onSpeakingChange = (speaking) => {
               setIsSpeaking(speaking);
               setAvatarState(speaking ? 'speaking' : 'idle');
-            };
-            client.onTurnComplete = (text) => {
-              try {
-                const match = text.match(/\{[\s\S]*"transcript"\s*:\s*"([^"]+)"[\s\S]*\}/i);
-                if (match && match[1]) {
-                  const transcript = match[1].trim();
-                  setLiveFinalTranscript((prev) => (prev ? prev.trim() + ' ' : '') + transcript);
-                  setInputText((prev) => (prev ? prev.trim() + ' ' : '') + transcript);
-                }
-              } catch (e) {
-                console.warn("[GeminiLive] Failed to parse transcript from turn:", text);
+              if (speaking && pendingAiSpeech.current) {
+                setAiSpeech(pendingAiSpeech.current);
+                pendingAiSpeech.current = null;
               }
             };
             setGeminiLiveClient(client);
@@ -1304,33 +938,108 @@ export default function Interview() {
   }, [isSpeaking]);
 
   const toggleListen = () => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!isMicOn && !SpeechRecognition) {
+      setErrorMessage('Speech recognition is not supported in this browser. Type your answer instead.');
+      return;
+    }
     setIsMicOn(prev => !prev);
   };
 
-  // Continuous Candidate Microphone Stream via GeminiLiveClient
   useEffect(() => {
-    if (isMicOn) {
-      setIsListeningSTT(true);
-      if (geminiLiveClient && geminiLiveClient.isConnected()) {
-        geminiLiveClient.startMicrophone().catch(err => {
-          console.warn("[GeminiLive] Failed to start microphone:", err);
-          setIsMicOn(false);
-          setIsListeningSTT(false);
-        });
-      }
-    } else {
-      if (geminiLiveClient) {
-        geminiLiveClient.stopMicrophone();
-      }
-      setIsListeningSTT(false);
-    }
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition || candidateRecognitionRef.current) return;
 
-    return () => {
-      if (geminiLiveClient) {
-        geminiLiveClient.stopMicrophone();
+    const recognition = new SpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = 'en-IN';
+
+    recognition.onstart = () => {
+      candidateRecognitionActiveRef.current = true;
+      setIsListeningSTT(true);
+      setErrorMessage('');
+    };
+
+    recognition.onresult = (event: any) => {
+      let interim = '';
+      let finalText = '';
+      for (let index = event.resultIndex; index < event.results.length; index += 1) {
+        const transcript = event.results[index][0]?.transcript?.trim();
+        if (!transcript) continue;
+        if (event.results[index].isFinal) finalText += `${finalText ? ' ' : ''}${transcript}`;
+        else interim += `${interim ? ' ' : ''}${transcript}`;
+      }
+
+      setLiveInterimTranscript(interim);
+      if (!finalText || isSpeakingRef.current) return;
+
+      const activeQuestion = questionsRef.current[currentQuestionIndexRef.current];
+      const questionText = activeQuestion?.question_text || activeQuestion?.question || '';
+      if (isQuestionEcho(finalText, questionText)) return;
+
+      setLiveFinalTranscript((previous) => (previous ? `${previous.trim()} ` : '') + finalText);
+      setInputText((previous) => {
+        const updated = (previous ? `${previous.trim()} ` : '') + finalText;
+        latestInputTextRef.current = updated;
+        return updated;
+      });
+      setSecondsWaiting(0);
+
+      if (voiceAutoSubmitTimerRef.current) clearTimeout(voiceAutoSubmitTimerRef.current);
+      voiceAutoSubmitTimerRef.current = setTimeout(() => {
+        const answer = latestInputTextRef.current.trim();
+        if (!isSpeakingRef.current && answer.length >= 25 && handleUserMessageRef.current) {
+          handleUserMessageRef.current(answer);
+        }
+      }, 2800);
+    };
+
+    recognition.onerror = (event: any) => {
+      candidateRecognitionActiveRef.current = false;
+      if (event.error === 'aborted') return;
+      setIsListeningSTT(false);
+      setIsMicOn(false);
+      const message = event.error === 'not-allowed' || event.error === 'service-not-allowed'
+        ? 'Microphone permission was denied. Type your answer or enable microphone access and try again.'
+        : event.error === 'no-speech'
+          ? 'No speech was detected. Try again or type your answer.'
+          : 'Speech recognition failed. Type your answer and continue.';
+      setErrorMessage(message);
+    };
+
+    recognition.onend = () => {
+      candidateRecognitionActiveRef.current = false;
+      setIsListeningSTT(false);
+      if (isMicOnRef.current && !isSpeakingRef.current) {
+        window.setTimeout(() => {
+          if (isMicOnRef.current && !isSpeakingRef.current && !candidateRecognitionActiveRef.current) {
+            try { recognition.start(); } catch (_) {}
+          }
+        }, 250);
       }
     };
-  }, [isMicOn, geminiLiveClient]);
+
+    candidateRecognitionRef.current = recognition;
+    return () => {
+      recognition.onend = null;
+      try { recognition.abort(); } catch (_) {}
+      candidateRecognitionRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const recognition = candidateRecognitionRef.current;
+    if (!recognition) return;
+    if (isMicOn && !isSpeaking) {
+      try {
+        if (!candidateRecognitionActiveRef.current) recognition.start();
+      } catch (_) {}
+    } else {
+      try { recognition.stop(); } catch (_) {}
+      setIsListeningSTT(false);
+    }
+  }, [isMicOn, isSpeaking]);
 
   // Persist session progress to server and local cache (scoped strictly to activeSetId)
   const persistSessionProgress = async (
@@ -1353,16 +1062,37 @@ export default function Interview() {
       is_completed: isCompleted
     };
 
+    const storedToken = typeof window !== 'undefined' && currentSetId ? localStorage.getItem(`interview_session_token_${currentSetId}`) : null;
+    const finalPayload = {
+      ...payload,
+      session_token: storedToken || undefined
+    };
+
     if (typeof window !== 'undefined' && currentSetId) {
-      localStorage.setItem(`interview_session_${currentSetId}`, JSON.stringify(payload));
+      localStorage.setItem(`interview_session_${currentSetId}`, JSON.stringify(finalPayload));
     }
 
     try {
-      await fetch('/api/interview/session/save', {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (storedToken) {
+        headers['x-session-token'] = storedToken;
+      }
+      const { data: { session: authSession } } = await supabase.auth.getSession();
+      if (authSession?.access_token) {
+        headers['Authorization'] = `Bearer ${authSession.access_token}`;
+      }
+
+      const saveRes = await fetch('/api/interview/session/save', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        headers,
+        body: JSON.stringify(finalPayload)
       });
+      if (saveRes.ok) {
+        const savedData = await saveRes.json();
+        if (savedData?.session_token && typeof window !== 'undefined' && currentSetId) {
+          localStorage.setItem(`interview_session_token_${currentSetId}`, savedData.session_token);
+        }
+      }
     } catch (e) {
       console.warn("[Interview] Failed to persist session progress to server:", e);
     }
@@ -1395,8 +1125,10 @@ export default function Interview() {
           body: JSON.stringify({
             company: targetCompany,
             role: targetRole,
+            roundName: ROUNDS[currentRoundIndex]?.label || undefined,
             jobDescription: targetJobDescription,
             candidateSkills: candidateSkills,
+            parsedResume: parsedResume,
             user_id: effectiveUid
           })
         });
@@ -1438,13 +1170,24 @@ export default function Interview() {
           jobDescription: targetJobDescription,
           candidateSkills,
           setId: targetSetId,
-          isVR: isVRActive
+          isVR: isVRActive,
+          resumeReference: parsedResume
         });
 
         // Restore existing interview session or initialize a new one (strictly scoped to targetSetId)
         let existingSession: any = null;
+        const storedToken = typeof window !== 'undefined' ? localStorage.getItem(`interview_session_token_${targetSetId}`) : null;
         try {
-          const sessRes = await fetch(`/api/interview/session/by-set/${targetSetId}`);
+          const reqHeaders: Record<string, string> = {};
+          if (storedToken) {
+            reqHeaders['x-session-token'] = storedToken;
+          }
+          if (authSession?.access_token) {
+            reqHeaders['Authorization'] = `Bearer ${authSession.access_token}`;
+          }
+          const sessRes = await fetch(`/api/interview/session/by-set/${targetSetId}`, {
+            headers: reqHeaders
+          });
           if (sessRes.ok) {
             existingSession = await sessRes.json();
           }
@@ -1504,6 +1247,7 @@ export default function Interview() {
 
           const newSessionPayload = {
             session_id: newSessionId,
+            session_token: storedToken || undefined,
             question_set_id: targetSetId,
             current_question_id: firstQ?.question_id || 'Q001',
             current_question_order: 1,
@@ -1512,11 +1256,25 @@ export default function Interview() {
           };
 
           try {
-            await fetch('/api/interview/session/save', {
+            const reqHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+            if (storedToken) {
+              reqHeaders['x-session-token'] = storedToken;
+            }
+            if (authSession?.access_token) {
+              reqHeaders['Authorization'] = `Bearer ${authSession.access_token}`;
+            }
+
+            const initSaveRes = await fetch('/api/interview/session/save', {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: reqHeaders,
               body: JSON.stringify(newSessionPayload)
             });
+            if (initSaveRes.ok) {
+              const savedData = await initSaveRes.json();
+              if (savedData?.session_token && typeof window !== 'undefined') {
+                localStorage.setItem(`interview_session_token_${targetSetId}`, savedData.session_token);
+              }
+            }
           } catch (e) {
             console.warn("[Interview] Failed to persist initial session to server:", e);
           }
@@ -1530,19 +1288,8 @@ export default function Interview() {
       }
     } catch (err: any) {
       console.warn("[Interview] Could not load canonical question set:", err);
-      if (targetRole && targetCompany) {
-        console.log(`[Interview] Falling back to tailored local questions for ${targetRole} at ${targetCompany}`);
-        const fallbackQuestions = getFallbackLocalQuestions('technical', targetRole, targetCompany, candidateSkills);
-        setQuestions(fallbackQuestions);
-        setCurrentQuestionIndex(0);
-        if (fallbackQuestions[0]) {
-          setAiSpeech(fallbackQuestions[0].question);
-        }
-        setInterviewState('READY');
-      } else {
-        setErrorMessage(err?.message || "Failed to load canonical interview question set.");
-        setInterviewState('ERROR');
-      }
+      setErrorMessage(err?.message || "Failed to load the canonical interview question set. Check your interview context and try again.");
+      setInterviewState('ERROR');
     } finally {
       setLoadingQuestions(false);
     }
@@ -1578,7 +1325,6 @@ export default function Interview() {
       
       // Avatar welcomes Candidate using intelligent mode memory
       const introGreetingStr = `Welcome to the ${targetCompany} executive VR boardroom. ${recapMessage} Please come on in, pull up a chair, and make yourself comfortable.`;
-      setAiSpeech(introGreetingStr);
       speakText(introGreetingStr);
     }, 2000);
     
@@ -1595,38 +1341,112 @@ export default function Interview() {
 
   // Trigger first round question once fully seated
   useEffect(() => {
-    if (entranceState === 'seated' && questions.length > 0 && currentQuestionIndex === 0 && chatHistory.length === 0) {
+    if (
+      entranceState === 'seated' &&
+      questions.length > 0 &&
+      currentQuestionIndex === 0 &&
+      !hasAnnouncedInitialQuestionRef.current
+    ) {
       const firstQ = questions[0];
       const qText = firstQ.question_text || firstQ.question;
       const qId = firstQ.question_id || 'Q001';
-      setAiSpeech(qText);
+      if (!geminiLiveClient?.isConnected()) return;
+      hasAnnouncedInitialQuestionRef.current = true;
       speakText(qText);
       setChatHistory(prev => [
         ...prev,
         { role: 'ai', text: `[${firstQ.round_name || firstQ.category || 'Interview'} - ${qId}] ${qText}` }
       ]);
     }
-  }, [entranceState, questions]);
+  }, [entranceState, questions, currentQuestionIndex, geminiLiveClient]);
 
-  // Vocalize exact stored canonical question text verbatim using Gemini Live ONLY
+  // Vocalize exact stored canonical question text verbatim using Gemini Live (Charon male voice) with Web Speech API male fallback
   const speakText = (text: string) => {
     if (!text) return;
+    pendingAiSpeech.current = text;
     setIsSpeaking(true);
     setAvatarState('speaking');
 
     if (geminiLiveClient && geminiLiveClient.isConnected()) {
-      geminiLiveClient.speakQuestion(text);
-    } else {
-      console.warn("Gemini Live not connected. Cannot speak question.");
-      setIsSpeaking(false);
-      setAvatarState('idle');
+      if (geminiLiveClient.speakQuestion(text)) {
+        return;
+      }
     }
+
+    // High-fidelity fallback: Web Speech API with executive male voice
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      try {
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(text);
+        const voices = window.speechSynthesis.getVoices();
+        const maleVoice = voices.find(v => 
+          v.lang.startsWith('en') && 
+          (v.name.toLowerCase().includes('david') || 
+           v.name.toLowerCase().includes('male') || 
+           v.name.toLowerCase().includes('george') || 
+           v.name.toLowerCase().includes('james') ||
+           v.name.toLowerCase().includes('guy') ||
+           v.name.toLowerCase().includes('mark'))
+        ) || voices.find(v => v.lang.startsWith('en'));
+        if (maleVoice) utterance.voice = maleVoice;
+        utterance.pitch = 0.92; // Authoritative executive male tone
+        utterance.rate = 1.0;
+        utterance.onstart = () => {
+          setIsSpeaking(true);
+          setAvatarState('speaking');
+          setAiSpeech(text);
+          pendingAiSpeech.current = null;
+        };
+        utterance.onend = () => {
+          setIsSpeaking(false);
+          setAvatarState('idle');
+        };
+        utterance.onerror = () => {
+          setIsSpeaking(false);
+          setAvatarState('idle');
+        };
+        window.speechSynthesis.speak(utterance);
+        return;
+      } catch (synthErr) {
+        console.warn("[Interview] Speech synthesis fallback failed:", synthErr);
+      }
+    }
+
+    // Text-only fallback if neither audio engine is available
+    setIsSpeaking(false);
+    setAvatarState('idle');
+    setAiSpeech(text);
+    pendingAiSpeech.current = null;
   };
 
   // Record candidate answer against exact canonical question_id and advance
+  useEffect(() => {
+    handleUserMessageRef.current = handleUserMessage;
+  });
+
   const handleUserMessage = async (message: string) => {
     const trimmedMessage = message.trim();
-    if (!trimmedMessage || loadingQuestions || isEvaluatingAnswer) return;
+    if (!trimmedMessage || loadingQuestions || isEvaluatingAnswer || isSubmittingAnswerRef.current) return;
+
+    // Clear auto-submit timer if pending
+    if (voiceAutoSubmitTimerRef.current) {
+      clearTimeout(voiceAutoSubmitTimerRef.current);
+      voiceAutoSubmitTimerRef.current = null;
+    }
+
+    // Safeguard: Discard if the message is an echo of the active question
+    const activeQ = questions[currentQuestionIndex];
+    const qText = activeQ?.question_text || activeQ?.question || '';
+    if (isQuestionEcho(trimmedMessage, qText)) {
+      console.log("[Interview] Discarded question echo in handleUserMessage:", trimmedMessage);
+      return;
+    }
+    isSubmittingAnswerRef.current = true;
+
+    // Clear the input text so it doesn't double-submit
+    setInputText('');
+    setLiveFinalTranscript('');
+    setLiveInterimTranscript('');
 
     // Immediately stop avatar speaking and audio playback
     if (geminiLiveClient) {
@@ -1636,10 +1456,11 @@ export default function Interview() {
     setAvatarState('idle');
 
     // Save active reply keyed directly by exact canonical question ID
-    const activeQ = questions[currentQuestionIndex];
     const qId = activeQ?.question_id || `Q${String(currentQuestionIndex + 1).padStart(3, '0')}`;
     const updatedAnswers = { ...answers, [qId]: trimmedMessage };
     setAnswers(updatedAnswers);
+    // Immediately persist answer to local storage and server for instant crash resilience
+    persistSessionProgress(qId, currentQuestionIndex + 1, updatedAnswers, false);
 
     // Append answer log to transcript with exact question_id
     setChatHistory(prev => [
@@ -1649,9 +1470,6 @@ export default function Interview() {
     setInputText("");
     setLiveFinalTranscript("");
     setLiveInterimTranscript("");
-
-    // Persist session progress against exact question_id
-    persistSessionProgress(qId, currentQuestionIndex + 1, updatedAnswers, false);
 
     // Calculate real-time visual telemetry fluctuations
     const wordCount = trimmedMessage.split(/\s+/).filter(Boolean).length;
@@ -1667,7 +1485,7 @@ export default function Interview() {
       fillerCount: prev.fillerCount + (hasFillers ? 1 : 0)
     }));
 
-    // Asynchronously request scoring for HUD/mentor advice without blocking flow or altering questions
+    setIsEvaluatingAnswer(true);
     try {
       const { data: { session } } = await supabase.auth.getSession();
       const token = session?.access_token || (() => {
@@ -1677,7 +1495,7 @@ export default function Interview() {
       })();
 
       const exactQText = activeQ?.question_text || activeQ?.question || "";
-      fetch('/api/interview/answer/score', {
+      const response = await fetch('/api/interview/answer/score', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({
@@ -1687,20 +1505,21 @@ export default function Interview() {
           question: exactQText,
           answer: trimmedMessage
         })
-      }).then(r => r.json()).then(data => {
-        if (data?.score !== undefined) {
-          updateMentorAdvice(`SCORE: ${data.score}/${data.max_score} (${data.verdict}). ${data.ideal_answer_in_one_line || ""}`);
-        }
-      }).catch(() => {});
+      });
+      if (!response.ok) throw new Error(`Answer evaluation failed (HTTP ${response.status})`);
+      const data = await response.json();
+      if (data?.score !== undefined) {
+        updateMentorAdvice(`SCORE: ${data.score}/${data.max_score} (${data.verdict}). ${data.ideal_answer_in_one_line || ""}`);
+      }
     } catch (e) {
-      // Non-blocking telemetry
+      updateMentorAdvice('Your answer was saved. Live evaluation is temporarily unavailable, so the interview will continue.');
     }
 
-    // Advance to next canonical question
-    advanceToNextQuestion();
+    persistSessionProgress(qId, currentQuestionIndex + 1, updatedAnswers, false);
+    advanceToNextQuestion(updatedAnswers);
   };
 
-  const advanceToNextQuestion = () => {
+  const advanceToNextQuestion = (updatedAnswers: Record<string, string>) => {
     setIsEvaluatingAnswer(false);
     setPendingFollowUp(null);
     setAskedFollowUp(false);
@@ -1715,7 +1534,6 @@ export default function Interview() {
       const nextQText = nextQ.question_text || nextQ.question;
 
       // AI speaks the EXACT stored question text - NO prefix, NO alteration
-      setAiSpeech(nextQText);
       speakText(nextQText);
 
       setChatHistory(prev => [
@@ -1724,14 +1542,13 @@ export default function Interview() {
       ]);
 
       // Persist session progress
-      persistSessionProgress(nextQId, nextIdx + 1, answers, false);
+      persistSessionProgress(nextQId, nextIdx + 1, updatedAnswers, false);
     } else {
       // Fully completed all questions in the canonical question set
       const totalQ = questions.length;
       setCurrentQuestionIndex(totalQ);
 
       const finalNotice = `Excellent work! You have completed all ${totalQ} canonical interview questions. Click 'Assess & View Report' to view your comprehensive evaluation!`;
-      setAiSpeech(finalNotice);
       speakText(finalNotice);
 
       setChatHistory(prev => [
@@ -1740,7 +1557,7 @@ export default function Interview() {
       ]);
 
       const lastQId = questions[totalQ - 1]?.question_id || 'COMPLETED';
-      persistSessionProgress(lastQId, totalQ, answers, true);
+      persistSessionProgress(lastQId, totalQ, updatedAnswers, true);
     }
   };
 
@@ -1754,7 +1571,6 @@ export default function Interview() {
     if (currentRoundIndex < 5) {
       const nextIdx = currentRoundIndex + 1;
       setCurrentRoundIndex(nextIdx);
-      fetchRoundQuestions(nextIdx);
     }
   };
 
@@ -2026,6 +1842,11 @@ export default function Interview() {
   return (
     <div className="relative w-full h-screen bg-transparent text-white overflow-hidden select-none">
       <div id="vr-ui-overlay" className="absolute inset-0 pointer-events-none z-10">
+        {errorMessage && interviewState === 'READY' && (
+          <div className="absolute top-16 left-1/2 -translate-x-1/2 max-w-xl px-4 py-2 rounded-lg bg-amber-950/90 border border-amber-700/70 text-amber-100 text-xs text-center shadow-lg">
+            {errorMessage}
+          </div>
+        )}
       
       {entranceState === 'unstarted' && (
         <div className="absolute inset-0 bg-[#09090b]/98 z-50 flex items-center justify-center p-6 text-white overflow-hidden pointer-events-auto">
@@ -2080,99 +1901,145 @@ export default function Interview() {
       
       {/* VR HUD BAR Overlay (rendered in VR mode) */}
       {isVRActive && (
-        <div className="absolute top-0 inset-x-0 p-5 flex justify-between items-start z-10 pointer-events-none">
+        <div className="absolute top-0 inset-x-0 p-3 px-6 flex justify-between items-center z-10 pointer-events-none">
           
-          {/* Left Side */}
-          <div className="flex gap-2.5 items-center flex-wrap">
+          {/* Left Side: Exit + Role Badge */}
+          <div className="flex gap-2 items-center flex-nowrap">
             <button 
               onClick={() => {
                 if (geminiLiveClient) geminiLiveClient.stopAudio();
                 navigate('/');
               }}
-              className="pointer-events-auto px-4 py-2.5 rounded-xl bg-red-950/40 border border-red-800 text-red-200 hover:bg-red-500 hover:text-zinc-950 shadow-xl transition-all flex items-center gap-2 font-black text-xs uppercase cursor-pointer"
+              className="pointer-events-auto px-3 py-1.5 rounded-lg bg-red-950/60 border border-red-800/80 text-red-200 hover:bg-red-500 hover:text-zinc-950 shadow-md transition-all flex items-center gap-1.5 font-bold text-[10px] uppercase cursor-pointer"
             >
-              <ArrowLeft className="w-4 h-4" />
+              <ArrowLeft className="w-3.5 h-3.5" />
               Exit
             </button>
-            <span className="px-3.5 py-2.5 rounded-xl bg-zinc-900/80 border border-zinc-800 backdrop-blur-md text-zinc-200 font-mono text-[10px] font-bold uppercase tracking-widest leading-none shadow-sm">
+            <span className="px-3 py-1.5 rounded-lg bg-zinc-900/80 border border-zinc-800/80 backdrop-blur-md text-zinc-300 font-mono text-[9px] font-bold uppercase tracking-wider shadow-xs hidden sm:inline-block">
               {targetCompany} • {targetRole}
             </span>
-            <span className="px-3.5 py-2.5 rounded-xl bg-cyan-950/80 border border-cyan-800 backdrop-blur-md text-cyan-400 font-mono text-[10px] font-bold uppercase tracking-widest leading-none flex items-center gap-2 shadow-sm">
-              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
-              {ROUNDS[currentRoundIndex].label}
+            <span className="px-2.5 py-1.5 rounded-lg bg-zinc-900/80 border border-zinc-800/80 backdrop-blur-md text-cyan-400 font-mono text-[9px] font-bold shadow-xs">
+              {questions[currentQuestionIndex]?.question_id || `Q${currentQuestionIndex + 1}`}
             </span>
-            
-            <span className="px-3 py-2.5 rounded-xl bg-zinc-900/90 border border-zinc-800 text-zinc-300 font-mono text-[10px] font-bold shadow-sm">
-              PROGRESS: {currentQuestionIndex < questions.length ? `${questions[currentQuestionIndex]?.question_id || `Q${currentQuestionIndex + 1}`} (${currentQuestionIndex + 1}/${questions.length})` : 'Completed'}
-            </span>
+            {questions[currentQuestionIndex] && (
+              <span className={`px-2.5 py-1.5 rounded-lg border backdrop-blur-md font-mono text-[9px] font-bold shadow-xs hidden md:inline-block ${
+                questions[currentQuestionIndex].category === 'REPORTED'
+                  ? 'bg-emerald-950/70 border-emerald-500/60 text-emerald-300'
+                  : questions[currentQuestionIndex].category === 'RESUME_BASED'
+                  ? 'bg-purple-950/70 border-purple-500/60 text-purple-300'
+                  : questions[currentQuestionIndex].category === 'OFFICIAL_DERIVED'
+                  ? 'bg-blue-950/70 border-blue-500/60 text-blue-300'
+                  : 'bg-amber-950/70 border-amber-500/60 text-amber-300'
+              }`}>
+                {questions[currentQuestionIndex].category === 'REPORTED'
+                  ? `REPORTED (${questions[currentQuestionIndex].source?.platform || 'COMMUNITY'})`
+                  : questions[currentQuestionIndex].category === 'RESUME_BASED'
+                  ? 'VERIFIED RESUME CLAIM'
+                  : questions[currentQuestionIndex].category === 'OFFICIAL_DERIVED'
+                  ? 'OFFICIAL PREP GUIDE'
+                  : 'AI PREDICTED (JD & ROLE)'}
+              </span>
+            )}
           </div>
 
-          {/* Right HUD actions */}
-          <div className="flex gap-3 flex-wrap items-center">
-            <div className="px-4 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 shadow-sm backdrop-blur-md flex items-center gap-2.5 text-zinc-200 pointer-events-auto">
-              <Clock className="w-4 h-4 text-cyan-400 animate-pulse" />
-              <span className="font-mono text-xs font-bold leading-none">{formatTime(timeLeft)}</span>
+          {/* Right Side: Timer + Mic + Actions */}
+          <div className="flex gap-2 flex-nowrap items-center">
+            <div className="px-3 py-1.5 rounded-lg bg-zinc-900/80 border border-zinc-800/80 shadow-xs backdrop-blur-md flex items-center gap-1.5 text-zinc-200 pointer-events-auto">
+              <Clock className="w-3.5 h-3.5 text-cyan-400 animate-pulse" />
+              <span className="font-mono text-[11px] font-bold leading-none">{formatTime(timeLeft)}</span>
             </div>
             
-            <button 
-              onClick={() => setIsMicOn(!isMicOn)}
-              className={`pointer-events-auto px-4 py-2.5 rounded-xl border backdrop-blur-md flex items-center gap-2 text-[10px] uppercase font-bold tracking-wider transition-all cursor-pointer shadow-sm ${
+            <button
+              onClick={toggleListen}
+              className={`pointer-events-auto px-3 py-1.5 rounded-lg border backdrop-blur-md flex items-center gap-1.5 text-[9px] uppercase font-bold tracking-wider transition-all shadow-xs ${
                 isMicOn 
-                  ? 'bg-cyan-950 border-cyan-500 text-cyan-400 font-extrabold' 
-                  : 'bg-zinc-900 border-zinc-800 text-zinc-300 hover:bg-zinc-855'
+                  ? 'bg-cyan-950/80 border-cyan-500 text-cyan-400 font-extrabold' 
+                  : 'bg-zinc-900/80 border-zinc-800 text-zinc-400'
               }`}
             >
-              {isMicOn ? <Mic className="w-4.5 h-4.5 text-cyan-400" /> : <MicOff className="w-4.5 h-4.5 text-zinc-400" />}
-              {isMicOn ? 'ACTIVE' : 'MIC OFF'}
+              {isMicOn ? <Mic className="w-3.5 h-3.5 text-cyan-400" /> : <MicOff className="w-3.5 h-3.5 text-zinc-400" />}
+              {isMicOn ? 'MIC ON' : 'MUTED'}
             </button>
-            
+
             <button
               onClick={handleGenerateEvaluationReport}
-              className="pointer-events-auto px-4 py-2.5 rounded-xl bg-cyan-500 hover:bg-cyan-600 text-zinc-950 font-black uppercase text-[10px] tracking-wider hover:scale-[1.01] hover:shadow-cyan-500/20 active:scale-[0.99] transition-all flex items-center gap-1.5 cursor-pointer shadow-md"
+              className="pointer-events-auto px-3 py-1.5 rounded-lg bg-cyan-500 hover:bg-cyan-600 text-zinc-950 font-black uppercase text-[9px] tracking-wider transition-all flex items-center gap-1 cursor-pointer shadow-sm hidden md:flex"
             >
-              <ClipboardCheck className="w-4.5 h-4.5" />
-              Assess & View Report
+              <ClipboardCheck className="w-3.5 h-3.5" />
+              Report
             </button>
             
             <div className="relative pointer-events-auto">
               <button
                 onClick={() => setIsSettingsOpen(!isSettingsOpen)}
-                className="px-4 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 transition-all flex items-center gap-2 text-[10px] uppercase font-bold tracking-wider text-zinc-300 shadow-sm cursor-pointer"
+                className="px-3 py-1.5 rounded-lg bg-zinc-900/80 border border-zinc-800/80 hover:bg-zinc-800 transition-all flex items-center gap-1 text-[9px] uppercase font-bold tracking-wider text-zinc-300 shadow-xs cursor-pointer"
               >
-                <Smartphone className="w-4 h-4" />
+                <Smartphone className="w-3.5 h-3.5" />
                 Settings
               </button>
               {isSettingsOpen && (
-                <div className="absolute right-0 top-full mt-2 w-72 bg-zinc-900/95 border border-zinc-800 rounded-xl shadow-2xl backdrop-blur-xl p-4 flex flex-col gap-4 text-left z-50">
-                  <div>
-                    <span className="text-[9px] uppercase tracking-widest font-black text-cyan-400 font-mono">Environment Controls</span>
-                  </div>
-                  <div className="space-y-1.5">
+                <div className="absolute right-0 top-full mt-2 w-64 bg-zinc-900/95 border border-zinc-800 rounded-xl shadow-2xl backdrop-blur-xl p-3 flex flex-col gap-3 text-left z-50">
+                  <div className="space-y-1">
                     <span className="text-[8px] uppercase font-bold text-zinc-400 font-mono">Camera Zoom</span>
-                    <div className="grid grid-cols-3 gap-1.5">
-                      <button onClick={handleZoomIn} className="py-1.5 text-center bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-mono text-[9px] font-bold rounded-lg transition-colors flex justify-center items-center cursor-pointer"><ZoomIn className="w-3.5 h-3.5 mr-1"/> In</button>
-                      <button onClick={handleZoomOut} className="py-1.5 text-center bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-mono text-[9px] font-bold rounded-lg transition-colors flex justify-center items-center cursor-pointer"><ZoomOut className="w-3.5 h-3.5 mr-1"/> Out</button>
-                      <button onClick={handleResetZoom} className="py-1.5 text-center bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-mono text-[9px] font-bold rounded-lg transition-colors cursor-pointer">Reset</button>
+                    <div className="grid grid-cols-3 gap-1">
+                      <button onClick={handleZoomIn} className="py-1 text-center bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-mono text-[9px] font-bold rounded transition-colors flex justify-center items-center cursor-pointer"><ZoomIn className="w-3 h-3 mr-0.5"/> In</button>
+                      <button onClick={handleZoomOut} className="py-1 text-center bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-mono text-[9px] font-bold rounded transition-colors flex justify-center items-center cursor-pointer"><ZoomOut className="w-3 h-3 mr-0.5"/> Out</button>
+                      <button onClick={handleResetZoom} className="py-1 text-center bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-mono text-[9px] font-bold rounded transition-colors cursor-pointer">Reset</button>
                     </div>
                   </div>
-                  <div className="space-y-1.5">
-                    <span className="text-[8px] uppercase font-bold text-zinc-400 font-mono">Lighting Mode</span>
-                    <div className="grid grid-cols-3 gap-1.5">
-                      <button onClick={() => setDaylightMode('morning')} className={`py-1.5 text-center font-mono text-[9px] font-bold rounded-lg transition-colors cursor-pointer ${daylightMode === 'morning' ? 'bg-amber-400 text-zinc-900' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300'}`}>Morning</button>
-                      <button onClick={() => setDaylightMode('sunset')} className={`py-1.5 text-center font-mono text-[9px] font-bold rounded-lg transition-colors cursor-pointer ${daylightMode === 'sunset' ? 'bg-orange-500 text-zinc-900' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300'}`}>Evening</button>
-                      <button onClick={() => setDaylightMode('night')} className={`py-1.5 text-center font-mono text-[9px] font-bold rounded-lg transition-colors cursor-pointer ${daylightMode === 'night' ? 'bg-indigo-500 text-zinc-900' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300'}`}>Night</button>
-                    </div>
-                  </div>
-                  <div className="space-y-1.5">
-                    <span className="text-[8px] uppercase font-bold text-zinc-400 font-mono">VR / AR Experience</span>
-                    <div className="grid grid-cols-2 gap-1.5">
-                      <button onClick={enterVRMode} className="py-1.5 text-center bg-zinc-800 hover:bg-zinc-700 text-cyan-400 font-mono text-[9px] font-bold rounded-lg transition-colors cursor-pointer">Enter VR</button>
-                      <button onClick={enterARMode} className="py-1.5 text-center bg-zinc-800 hover:bg-zinc-700 text-emerald-400 font-mono text-[9px] font-bold rounded-lg transition-colors cursor-pointer">Enter AR</button>
+                  <div className="space-y-1">
+                    <span className="text-[8px] uppercase font-bold text-zinc-400 font-mono">VR / AR Mode</span>
+                    <div className="grid grid-cols-2 gap-1">
+                      <button onClick={enterVRMode} className="py-1 text-center bg-zinc-800 hover:bg-zinc-700 text-cyan-400 font-mono text-[9px] font-bold rounded transition-colors cursor-pointer">Enter VR</button>
+                      <button onClick={enterARMode} className="py-1 text-center bg-zinc-800 hover:bg-zinc-700 text-emerald-400 font-mono text-[9px] font-bold rounded transition-colors cursor-pointer">Enter AR</button>
                     </div>
                   </div>
                 </div>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* VR Response Console: Live Speech Pill + Direct Keyboard Input Bar (Fallback for Desktop 3D / Mic Disabled) */}
+      {isVRActive && (
+        <div className="absolute bottom-4 inset-x-0 flex flex-col items-center gap-2 z-20 px-4 pointer-events-none">
+          {chatHistory.length > 0 && (
+            <div className="bg-zinc-950/85 border border-zinc-800/80 backdrop-blur-md rounded-full py-1 px-4 shadow-lg text-center max-w-xl pointer-events-auto">
+              <p className="text-[11px] text-zinc-300 truncate">
+                <span className={chatHistory[chatHistory.length - 1].role === 'user' ? "text-cyan-400 font-bold" : "text-amber-400 font-bold"}>
+                  {chatHistory[chatHistory.length - 1].role === 'user' ? 'You: ' : 'Mr. Vinodh: '}
+                </span>
+                {chatHistory[chatHistory.length - 1].text}
+              </p>
+            </div>
+          )}
+
+          {/* Desktop 3D Answer Input Bar (Usable even when WebXR or microphone is unavailable) */}
+          <div className="w-full max-w-xl bg-zinc-950/90 border border-zinc-800/90 backdrop-blur-md rounded-2xl p-2 shadow-2xl flex items-center gap-2 pointer-events-auto">
+            <input
+              type="text"
+              value={inputText}
+              onChange={(e) => setInputText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && inputText.trim() && !loadingQuestions && !isEvaluatingAnswer) {
+                  handleUserMessage(inputText.trim());
+                }
+              }}
+              placeholder="Type your answer or speak using the microphone..."
+              className="flex-1 bg-zinc-900/90 border border-zinc-700/80 rounded-xl px-3.5 py-2 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-cyan-500 transition-colors"
+            />
+            <button
+              onClick={() => {
+                if (inputText.trim()) {
+                  handleUserMessage(inputText.trim());
+                }
+              }}
+              disabled={!inputText.trim() || loadingQuestions || isEvaluatingAnswer}
+              className="px-4 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 disabled:opacity-40 text-zinc-950 font-bold text-xs uppercase tracking-wider transition-all cursor-pointer whitespace-nowrap shadow-xs"
+            >
+              Submit & Next
+            </button>
           </div>
         </div>
       )}
@@ -2229,154 +2096,7 @@ export default function Interview() {
         </motion.div>
       </div>
 
-      {/* Interactive Transcripts, Tips, and Inputs Right Side Console */}
-      <div className="absolute top-24 right-5 w-[320px] md:w-[360px] max-h-[86vh] overflow-y-auto flex flex-col gap-3.5 z-10 pointer-events-none pr-1.5 scrollbar-thin scrollbar-thumb-zinc-800">
-        
-        {/* CURRENT QUESTION DISPLAY */}
-        {questions[currentQuestionIndex] && currentQuestionIndex < questions.length && (
-          <motion.div
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="pointer-events-auto bg-zinc-900 border border-zinc-800 rounded-2xl p-5 shadow-xl space-y-3 backdrop-blur-md text-left"
-          >
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] uppercase font-bold tracking-widest text-cyan-400 font-mono block">
-                {questions[currentQuestionIndex].question_id || `Q${String(currentQuestionIndex + 1).padStart(3, '0')}`} · {questions[currentQuestionIndex].category ? questions[currentQuestionIndex].category.replace('_', ' ').toUpperCase() : 'CANONICAL QUESTION'}
-              </span>
-              {activeSetId && (
-                <span className="text-[9px] text-zinc-400 font-mono bg-zinc-800/80 px-2 py-0.5 rounded border border-zinc-700/50">
-                  {activeSetId}
-                </span>
-              )}
-            </div>
-            <div className="text-sm md:text-base font-bold text-zinc-100 leading-relaxed font-sans">
-              "{questions[currentQuestionIndex].question_text || questions[currentQuestionIndex].question}"
-            </div>
-            {(questions[currentQuestionIndex].follow_up || questions[currentQuestionIndex].follow_up_if_weak) && (
-              <div className="text-[11px] text-zinc-300 mt-2 font-mono leading-relaxed pt-2 border-t border-zinc-800">
-                <span className="text-cyan-400 font-bold mr-1">Follow-up context:</span>
-                "{questions[currentQuestionIndex].follow_up || questions[currentQuestionIndex].follow_up_if_weak}"
-              </div>
-            )}
-            {questions[currentQuestionIndex].follow_up_if_strong && (
-              <div className="text-[11px] text-zinc-300 mt-2 font-mono leading-relaxed pt-2 border-t border-zinc-800">
-                <span className="text-green-500 font-bold mr-1">If Strong:</span>
-                "{questions[currentQuestionIndex].follow_up_if_strong}"
-              </div>
-            )}
-          </motion.div>
-        )}
 
-        <motion.div 
-          initial={{ opacity: 0, x: 20 }}
-          animate={{ opacity: 1, x: 0 }}
-          className="flex-1 flex flex-col bg-zinc-900/95 border border-zinc-800 backdrop-blur-xl shadow-2xl rounded-2xl overflow-hidden pointer-events-auto mt-auto text-left"
-        >
-          {/* Transcript Dialogue container */}
-          <div className="p-3.5 border-b border-zinc-800 bg-zinc-950/40">
-            <span className="text-[9px] uppercase font-bold tracking-widest text-zinc-300 font-mono">Discussion Feed</span>
-            <h4 className="text-xs font-bold text-zinc-200">Conversation Transcript</h4>
-          </div>
-
-          <div className="flex-1 p-4 overflow-y-auto min-h-[220px] max-h-[360px] flex flex-col gap-3 scrollbar-thin scrollbar-thumb-zinc-800 bg-zinc-950/30">
-             {loadingQuestions ? (
-               <div className="flex flex-col items-center justify-center my-auto py-12 gap-3 text-center">
-                 <Loader2 className="w-8 h-8 animate-spin text-cyan-400" />
-                 <span className="text-xs text-zinc-400 font-mono">Loading canonical question set...</span>
-               </div>
-             ) : chatHistory.length === 0 ? (
-               <div className="text-zinc-300 text-xs text-center my-auto italic">
-                 Awaiting initial assessment response. Start speaking or type in your response below.
-               </div>
-             ) : (
-               chatHistory.map((msg, i) => (
-                  <div key={i} className={`p-2.5 rounded-xl max-w-[85%] text-xs leading-relaxed ${
-                    msg.role === 'user' 
-                      ? 'bg-cyan-950/60 text-cyan-150 ml-auto border border-cyan-900 shadow-sm' 
-                      : 'bg-zinc-950/80 text-zinc-200 mr-auto border border-zinc-800'
-                  }`}>
-                    <span className="text-[8px] uppercase font-mono font-bold block mb-1 text-cyan-400">
-                      {msg.role === 'user' ? 'You' : 'Interviewer'}
-                    </span>
-                    "{msg.text}"
-                  </div>
-               ))
-             )}
-             {(isGenerating || isEvaluatingAnswer) && (
-                <div className="p-2.5 rounded-xl max-w-[85%] text-xs bg-zinc-950 text-zinc-300 mr-auto border border-zinc-800 flex items-center gap-2">
-                  <Loader2 className="w-3.5 h-3.5 animate-spin text-cyan-500" />
-                  {isEvaluatingAnswer ? "Scoring answer..." : "Interviewer is listening..."}
-                </div>
-             )}
-             <div ref={messagesEndRef} />
-          </div>
-
-          {/* Prompt transition button in case question flow completes */}
-          {currentQuestionIndex >= questions.length && questions.length > 0 && (
-            <div className="p-4 bg-zinc-950 text-center space-y-3.5 border-t border-zinc-800">
-              <p className="text-xs text-emerald-400 font-bold">🎉 All {questions.length} canonical interview questions concluded successfully!</p>
-              <button
-                onClick={handleGenerateEvaluationReport}
-                className="w-full py-2.5 bg-emerald-500 hover:bg-emerald-600 text-zinc-950 rounded-xl font-bold uppercase text-xs tracking-wider transition-all flex items-center justify-center gap-1 cursor-pointer shadow-lg shadow-emerald-500/10"
-              >
-                <ClipboardCheck className="w-4 h-4" />
-                Assess & View Feedback Report
-              </button>
-            </div>
-          )}
-
-          {/* Interactive Keyboard Submission Input */}
-          {currentQuestionIndex < questions.length && !loadingQuestions && (
-            <div className="p-3 border-t border-zinc-800 bg-zinc-950/60 flex items-center gap-2.5">
-               <button 
-                 onClick={toggleListen}
-                 className={`p-2.5 rounded-xl transition-colors cursor-pointer shrink-0 shadow-sm ${isListeningSTT ? 'bg-red-500 hover:bg-red-600 animate-pulse' : 'bg-cyan-500 hover:bg-cyan-600'}`}
-               >
-                 {isListeningSTT ? <MicOff className="w-3.5 h-3.5 fill-zinc-950" /> : <Mic className="w-3.5 h-3.5 fill-zinc-950" />}
-               </button>
-               <input
-                 type="text"
-                 value={inputText}
-                 onChange={(e) => setInputText(e.target.value)}
-                 onKeyDown={(e) => e.key === 'Enter' && handleUserMessage(inputText)}
-                 placeholder={isListeningSTT ? "Listening (speaking now)..." : "Type your answer or use microphone..."}
-                 className="flex-1 bg-transparent border-none text-zinc-350 text-xs outline-none px-2 placeholder-zinc-500"
-                 disabled={isGenerating || loadingQuestions || isListeningSTT}
-               />
-               <button 
-                 onClick={handleSkipQuestion}
-                 className="text-[9px] px-2 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-400 uppercase font-black tracking-wider transition-colors"
-                 title="Skip question"
-                 disabled={loadingQuestions || isListeningSTT}
-               >
-                 skip
-               </button>
-               <button 
-                 onClick={() => handleUserMessage(inputText)}
-                 disabled={!inputText.trim() || isGenerating || loadingQuestions || isListeningSTT}
-                 className="p-2.5 rounded-xl bg-cyan-500 hover:bg-cyan-600 disabled:opacity-30 disabled:hover:bg-cyan-500 text-zinc-950 disabled:cursor-not-allowed transition-colors cursor-pointer shrink-0 shadow-sm"
-               >
-                 <Send className="w-3.5 h-3.5 fill-zinc-950" />
-               </button>
-            </div>
-          )}
-        </motion.div>
-      </div>
-
-      {/* Center Screen Subtitles Panel */}
-      {aiSpeech && (
-        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-10 pointer-events-none w-full max-w-2xl px-6">
-          <motion.div 
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="w-full py-4 px-6 rounded-2xl bg-[#09090b]/90 border border-zinc-800 backdrop-blur-xl shadow-2xl"
-          >
-            <p className="text-sm md:text-base text-zinc-100 font-medium leading-relaxed text-center">
-              "{aiSpeech}"
-            </p>
-          </motion.div>
-        </div>
-      )}
 
       {/* 2D Immersive Control Center (Bottom-Left) */}
       <div className="absolute bottom-6 left-6 z-10 flex flex-col gap-3.5 pointer-events-auto">
