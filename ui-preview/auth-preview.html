@@ -1,0 +1,1363 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>YATRA — Sign In (Approved UI Specification)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    /* ─────────────────────────────────────────────────────────────
+       RESET & BASE DESIGN TOKENS
+    ───────────────────────────────────────────────────────────── */
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    :root {
+      --bg-white: #ffffff;
+      --text-primary: #0f172a;
+      --text-secondary: #64748b;
+      --text-muted: #94a3b8;
+      --border-light: #e2e8f0;
+      --border-card: #f1f5f9;
+      --brand-blue: #2563eb;
+      --brand-indigo: #4f46e5;
+      --brand-purple: #7c3aed;
+      --success-green: #10b981;
+      --phone-width: 232px;
+      --phone-height: 472px;
+      --phone-gap: 32px;
+      /* Repeating unit width: 3 phones * (232px + 32px) = 792px */
+      --repeat-unit: 792px;
+    }
+
+    body {
+      font-family: 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background-color: var(--bg-white);
+      color: var(--text-primary);
+      min-height: 100vh;
+      overflow-x: hidden;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    /* ─────────────────────────────────────────────────────────────
+       SPLIT SCREEN CONTAINER & FLOATING CURVED CARD
+    ───────────────────────────────────────────────────────────── */
+    .yatra-login-layout {
+      display: flex;
+      min-height: 100vh;
+      width: 100vw;
+      background: var(--bg-white);
+      position: relative;
+      overflow: hidden;
+      align-items: center;
+    }
+
+    /* Floating Card Left Column */
+    .yatra-form-column {
+      position: relative;
+      z-index: 30;
+      flex: 0 0 auto;
+      width: 530px;
+      max-width: 44vw;
+      min-width: 430px;
+      margin: 28px 0 28px 36px;
+      height: calc(100vh - 56px);
+      max-height: 880px;
+      min-height: 680px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      background: transparent;
+      filter: drop-shadow(0 20px 40px rgba(37, 99, 235, 0.08)) drop-shadow(0 8px 18px rgba(124, 58, 237, 0.06));
+      box-sizing: border-box;
+    }
+
+    /* SVG Organic Curved Background */
+    .curved-panel-bg {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 1;
+      pointer-events: none;
+      overflow: visible;
+    }
+
+    /* Inner Form Container */
+    .form-container {
+      position: relative;
+      z-index: 2;
+      width: 100%;
+      max-width: 395px;
+      padding: 40px 28px 40px 46px;
+      margin: 0;
+      box-sizing: border-box;
+    }
+
+    /* Brand Logo */
+    .brand-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 26px;
+    }
+
+    .brand-badge {
+      width: 40px;
+      height: 40px;
+      background: #0284c7;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 4px 14px -2px rgba(2, 132, 199, 0.35);
+      flex-shrink: 0;
+    }
+
+    .brand-name {
+      font-size: 24px;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      color: var(--text-primary);
+    }
+
+    /* Headlines */
+    .form-title {
+      font-size: 40px;
+      line-height: 1.12;
+      font-weight: 800;
+      letter-spacing: -0.035em;
+      color: var(--text-primary);
+      margin-bottom: 12px;
+    }
+
+    .highlight-opportunity {
+      color: var(--brand-blue);
+      display: inline-block;
+    }
+
+    .form-subtitle {
+      font-size: 14px;
+      line-height: 1.5;
+      color: var(--text-secondary);
+      margin-bottom: 24px;
+      font-weight: 450;
+      max-width: 340px;
+    }
+
+    /* Continue with Google Button */
+    .btn-google {
+      width: 100%;
+      height: 48px;
+      border: 1.5px solid var(--border-light);
+      border-radius: 14px;
+      background: #ffffff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      font-size: 14.5px;
+      font-weight: 600;
+      color: var(--text-primary);
+      cursor: pointer;
+      transition: all 0.2s ease;
+      box-shadow: 0 2px 6px rgba(15, 23, 42, 0.03);
+    }
+
+    .btn-google:hover {
+      background: #f8fafc;
+      border-color: #cbd5e1;
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(15, 23, 42, 0.06);
+    }
+
+    /* OR Divider */
+    .divider-row {
+      display: flex;
+      align-items: center;
+      margin: 18px 0;
+      gap: 14px;
+    }
+
+    .divider-line {
+      flex: 1;
+      height: 1px;
+      background: var(--border-light);
+    }
+
+    .divider-text {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      color: var(--text-muted);
+      text-transform: uppercase;
+    }
+
+    /* Input Fields */
+    .field-group {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      margin-bottom: 12px;
+    }
+
+    .input-wrapper {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+
+    .input-icon {
+      position: absolute;
+      left: 16px;
+      color: var(--text-muted);
+      pointer-events: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .input-eye {
+      position: absolute;
+      right: 16px;
+      color: var(--text-muted);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: none;
+      border: none;
+      padding: 0;
+    }
+
+    .input-eye:hover {
+      color: var(--text-secondary);
+    }
+
+    .form-input {
+      width: 100%;
+      height: 48px;
+      border: 1.5px solid var(--border-light);
+      border-radius: 14px;
+      padding: 0 16px 0 44px;
+      font-size: 14px;
+      color: var(--text-primary);
+      background: #ffffff;
+      outline: none;
+      font-family: inherit;
+      transition: all 0.2s ease;
+      box-shadow: 0 2px 6px rgba(15, 23, 42, 0.02);
+    }
+
+    .form-input.has-eye {
+      padding-right: 44px;
+    }
+
+    .form-input::placeholder {
+      color: var(--text-muted);
+      font-weight: 400;
+    }
+
+    .form-input:focus {
+      border-color: #3b82f6;
+      box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.14);
+    }
+
+    /* Forgot Password */
+    .forgot-pass-row {
+      display: flex;
+      justify-content: flex-end;
+      margin-bottom: 18px;
+    }
+
+    .forgot-link {
+      font-size: 13.5px;
+      font-weight: 600;
+      color: var(--brand-blue);
+      text-decoration: none;
+      transition: color 0.15s ease;
+    }
+
+    .forgot-link:hover {
+      text-decoration: underline;
+      color: #1d4ed8;
+    }
+
+    /* Submit Button (Blue-Purple Gradient) */
+    .btn-submit {
+      width: 100%;
+      height: 50px;
+      border: none;
+      border-radius: 14px;
+      background: linear-gradient(135deg, #2563eb 0%, #4f46e5 50%, #7c3aed 100%);
+      color: #ffffff;
+      font-size: 15.5px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      box-shadow: 0 10px 24px -5px rgba(37, 99, 235, 0.45);
+      transition: all 0.25s ease;
+    }
+
+    .btn-submit:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 14px 28px -5px rgba(37, 99, 235, 0.55);
+      filter: brightness(1.03);
+    }
+
+    .btn-submit:active {
+      transform: translateY(0);
+      box-shadow: 0 6px 16px -4px rgba(37, 99, 235, 0.45);
+    }
+
+    /* Footer text */
+    .form-footer {
+      text-align: center;
+      margin-top: 22px;
+      font-size: 13.5px;
+      color: var(--text-secondary);
+    }
+
+    .signup-link {
+      color: var(--brand-blue);
+      font-weight: 700;
+      text-decoration: none;
+      margin-left: 4px;
+    }
+
+    .signup-link:hover {
+      text-decoration: underline;
+    }
+
+    /* ─────────────────────────────────────────────────────────────
+       RIGHT PANEL: CONTINUOUS DIAGONAL PHONE SHOWCASE
+       Motion: TOP-RIGHT → BOTTOM-LEFT (SEAMLESS CONVEYOR LOOP)
+    ───────────────────────────────────────────────────────────── */
+    .yatra-showcase-column {
+      flex: 1;
+      position: relative;
+      background: #ffffff;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* Soft edge vignette to fade seamlessly at the container borders */
+    .showcase-vignette-mask {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      z-index: 10;
+      background: 
+        linear-gradient(to right, #ffffff 0%, rgba(255, 255, 255, 0) 5%, rgba(255, 255, 255, 0) 95%, #ffffff 100%),
+        linear-gradient(to bottom, #ffffff 0%, rgba(255, 255, 255, 0) 5%, rgba(255, 255, 255, 0) 95%, #ffffff 100%);
+    }
+
+    /* Tilted conveyor stage: rotated by -13.5deg to match screenshot angle */
+    .conveyor-viewport {
+      position: absolute;
+      width: 240%;
+      height: 240%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transform: rotate(-13.5deg);
+      transform-origin: center center;
+    }
+
+    /* ── UNIFIED SEAMLESS CONVEYOR TRACK ──
+       Translates horizontally in the tilted stage coordinate frame.
+       Because the stage is tilted -13.5deg counter-clockwise:
+       Moving along -X translates across screen coordinates:
+       LEFT (dX < 0) and DOWN (dY > 0) -> EXACTLY TOP-RIGHT TO BOTTOM-LEFT!
+    */
+    .conveyor-track {
+      display: flex;
+      flex-direction: column;
+      gap: 34px;
+      animation: conveyorSlide 30s linear infinite;
+      will-change: transform;
+    }
+
+    @keyframes conveyorSlide {
+      0% {
+        transform: translate3d(0, 0, 0);
+      }
+      100% {
+        /* Translates exactly one full repeating period of 3 phones: -792px */
+        transform: translate3d(-792px, 0, 0);
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .conveyor-track {
+        animation: none;
+      }
+    }
+
+    /* Stream Rows */
+    .phone-stream-row {
+      display: flex;
+      gap: var(--phone-gap);
+      align-items: center;
+    }
+
+    /* Stagger Row 2 slightly to match the organic layout in screenshot */
+    .phone-stream-row.row-staggered {
+      margin-left: -54px;
+    }
+
+    /* ─────────────────────────────────────────────────────────────
+       SMARTPHONE HARDWARE MOCKUP CHASSIS
+    ───────────────────────────────────────────────────────────── */
+    .phone-mockup {
+      width: var(--phone-width);
+      height: var(--phone-height);
+      background: #ffffff;
+      border: 3.5px solid #0f172a;
+      border-radius: 38px;
+      padding: 10px 14px 14px;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 
+        0 24px 48px -12px rgba(99, 102, 241, 0.18),
+        0 8px 24px -4px rgba(15, 23, 42, 0.08),
+        0 0 1px rgba(15, 23, 42, 0.25);
+      flex-shrink: 0;
+      user-select: none;
+    }
+
+    /* Dynamic Island pill */
+    .phone-notch {
+      width: 68px;
+      height: 18px;
+      background: #0f172a;
+      border-radius: 20px;
+      margin: 0 auto 6px;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      padding-right: 7px;
+    }
+
+    .phone-camera-dot {
+      width: 6px;
+      height: 6px;
+      background: #1e293b;
+      border-radius: 50%;
+    }
+
+    /* Status Bar */
+    .phone-status-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0 4px;
+      font-size: 10px;
+      font-weight: 700;
+      color: #0f172a;
+      margin-bottom: 8px;
+    }
+
+    .status-icons {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    /* Screen Header Title */
+    .screen-header {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 12px;
+    }
+
+    .screen-icon-badge {
+      width: 34px;
+      height: 34px;
+      border-radius: 10px;
+      background: #f5f3ff;
+      color: #7c3aed;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .screen-title {
+      font-size: 14px;
+      font-weight: 800;
+      color: #0f172a;
+      letter-spacing: -0.015em;
+    }
+
+    /* Screen Content Container */
+    .screen-content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── PHONE 1: RESUME INTELLIGENCE ── */
+    .gauge-wrapper {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      margin: 4px 0 14px;
+      position: relative;
+    }
+
+    .gauge-svg {
+      width: 118px;
+      height: 118px;
+      transform: rotate(-90deg);
+    }
+
+    .gauge-circle-bg {
+      fill: none;
+      stroke: #f1f5f9;
+      stroke-width: 9;
+    }
+
+    .gauge-circle-progress {
+      fill: none;
+      stroke: url(#greenCyanGradient);
+      stroke-width: 9;
+      stroke-linecap: round;
+      stroke-dasharray: 295;
+      stroke-dashoffset: 24; /* ~92% fill */
+    }
+
+    .gauge-label-center {
+      position: absolute;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .gauge-score-value {
+      font-size: 26px;
+      font-weight: 800;
+      color: #0f172a;
+      line-height: 1;
+    }
+
+    .gauge-score-sub {
+      font-size: 9.5px;
+      color: #64748b;
+      font-weight: 600;
+      margin-top: 3px;
+    }
+
+    .checklist-container {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .checklist-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: #f8fafc;
+      border: 1px solid #f1f5f9;
+      padding: 8px 10px;
+      border-radius: 10px;
+    }
+
+    .check-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .check-bullet {
+      width: 18px;
+      height: 18px;
+      background: var(--success-green);
+      color: #ffffff;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      font-weight: 800;
+    }
+
+    .check-text {
+      font-size: 11px;
+      font-weight: 700;
+      color: #0f172a;
+    }
+
+    .check-arrow {
+      color: #94a3b8;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    /* ── PHONE 2: AI INTERVIEW ── */
+    .avatar-wrapper {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      margin-top: 2px;
+      margin-bottom: 8px;
+    }
+
+    .avatar-img-box {
+      width: 112px;
+      height: 112px;
+      border-radius: 18px;
+      overflow: hidden;
+      box-shadow: 0 10px 20px -4px rgba(0, 0, 0, 0.12);
+      border: 2px solid #ffffff;
+      background: #e2e8f0;
+      position: relative;
+    }
+
+    .avatar-img-box img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .waveform-bar-box {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 3.5px;
+      height: 28px;
+      margin: 8px 0;
+    }
+
+    .wave-bar {
+      width: 3.5px;
+      border-radius: 4px;
+      background: linear-gradient(180deg, #6366f1, #8b5cf6);
+      animation: wavePulse 1.4s ease-in-out infinite;
+    }
+
+    .wave-bar:nth-child(1) { height: 8px; animation-delay: 0.1s; }
+    .wave-bar:nth-child(2) { height: 16px; animation-delay: 0.25s; }
+    .wave-bar:nth-child(3) { height: 24px; animation-delay: 0.4s; }
+    .wave-bar:nth-child(4) { height: 14px; animation-delay: 0.2s; }
+    .wave-bar:nth-child(5) { height: 26px; animation-delay: 0.5s; }
+    .wave-bar:nth-child(6) { height: 18px; animation-delay: 0.35s; }
+    .wave-bar:nth-child(7) { height: 22px; animation-delay: 0.15s; }
+    .wave-bar:nth-child(8) { height: 10px; animation-delay: 0.45s; }
+
+    @keyframes wavePulse {
+      0%, 100% { transform: scaleY(0.4); opacity: 0.7; }
+      50% { transform: scaleY(1); opacity: 1; }
+    }
+
+    .question-speech-box {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 10px 12px;
+      font-size: 11px;
+      font-weight: 700;
+      color: #0f172a;
+      line-height: 1.45;
+      text-align: center;
+      margin-bottom: 12px;
+    }
+
+    .mic-button-row {
+      display: flex;
+      justify-content: center;
+      margin-top: auto;
+      margin-bottom: 2px;
+    }
+
+    .mic-circle-btn {
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #4f46e5, #7c3aed);
+      color: #ffffff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 8px 18px -3px rgba(99, 102, 241, 0.45);
+    }
+
+    /* ── PHONE 3: JOB DISCOVERY ── */
+    .job-cards-col {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin-top: 6px;
+    }
+
+    .job-item-card {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: #ffffff;
+      border: 1px solid #f1f5f9;
+      border-radius: 14px;
+      padding: 12px 14px;
+      box-shadow: 0 4px 12px -2px rgba(0, 0, 0, 0.04);
+    }
+
+    .job-card-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .company-logo-sq {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      background: #f8fafc;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid #f1f5f9;
+      flex-shrink: 0;
+    }
+
+    .company-info-text {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .company-name-bold {
+      font-size: 12.5px;
+      font-weight: 800;
+      color: #0f172a;
+    }
+
+    .role-title-gray {
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--text-secondary);
+    }
+
+    .job-arrow-icon {
+      color: #cbd5e1;
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    /* ── PHONE 4: PERFORMANCE ANALYTICS ── */
+    .analytics-gauge-progress {
+      fill: none;
+      stroke: url(#purpleCyanGradient);
+      stroke-width: 9;
+      stroke-linecap: round;
+      stroke-dasharray: 295;
+      stroke-dashoffset: 35; /* ~88% fill */
+    }
+
+    .skills-bars-col {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-top: 6px;
+    }
+
+    .skill-bar-item {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .skill-bar-labels {
+      display: flex;
+      justify-content: space-between;
+      font-size: 10.5px;
+      font-weight: 700;
+      color: #0f172a;
+    }
+
+    .skill-percent-bold {
+      color: #6366f1;
+    }
+
+    .skill-track-bg {
+      width: 100%;
+      height: 7px;
+      background: #f1f5f9;
+      border-radius: 10px;
+      overflow: hidden;
+    }
+
+    .skill-fill-gradient {
+      height: 100%;
+      border-radius: 10px;
+      background: linear-gradient(90deg, #6366f1, #a855f7);
+    }
+
+    /* ── PHONE 5: CAREER ROADMAP ── */
+    .roadmap-timeline-col {
+      display: flex;
+      flex-direction: column;
+      margin-top: 8px;
+      padding-left: 6px;
+    }
+
+    .timeline-step-row {
+      display: flex;
+      gap: 12px;
+      position: relative;
+      padding-bottom: 24px;
+    }
+
+    .timeline-step-row:last-child {
+      padding-bottom: 4px;
+    }
+
+    .timeline-axis-line {
+      position: absolute;
+      left: 11px;
+      top: 24px;
+      bottom: 0;
+      width: 2px;
+      background: #e2e8f0;
+    }
+
+    .step-node-circle {
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10.5px;
+      font-weight: 800;
+      flex-shrink: 0;
+      z-index: 2;
+    }
+
+    .node-completed {
+      background: var(--success-green);
+      color: #ffffff;
+      box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.2);
+    }
+
+    .node-progress {
+      background: var(--brand-blue);
+      color: #ffffff;
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.2);
+    }
+
+    .node-next {
+      background: #a855f7;
+      color: #ffffff;
+      box-shadow: 0 0 0 3px rgba(168, 85, 247, 0.2);
+    }
+
+    .step-info-col {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .step-title-bold {
+      font-size: 12.5px;
+      font-weight: 800;
+      color: #0f172a;
+    }
+
+    .status-badge-text {
+      font-size: 10px;
+      font-weight: 700;
+    }
+
+    .status-green { color: var(--success-green); }
+    .status-blue { color: var(--brand-blue); }
+    .status-purple { color: #a855f7; }
+
+    /* ── PHONE 6: VR INTERVIEW ── */
+    .vr-room-preview {
+      width: 100%;
+      height: 172px;
+      border-radius: 16px;
+      overflow: hidden;
+      margin: 6px 0 14px;
+      position: relative;
+      background: #0f172a;
+      box-shadow: 0 8px 24px -4px rgba(79, 70, 229, 0.2);
+    }
+
+    .vr-room-preview img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    /* Virtual Boardroom Simulation Graphics */
+    .vr-canvas-fallback {
+      width: 100%;
+      height: 100%;
+      background: radial-gradient(circle at 50% 30%, #312e81 0%, #0f172a 100%);
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .vr-halo-ring {
+      position: absolute;
+      top: 14px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 84px;
+      height: 24px;
+      border: 3px solid rgba(192, 132, 252, 0.9);
+      border-radius: 50%;
+      box-shadow: 0 0 20px #c084fc, inset 0 0 10px #c084fc;
+      pointer-events: none;
+    }
+
+    .vr-interviewer-silhouette {
+      position: absolute;
+      bottom: 0;
+      width: 90px;
+      height: 120px;
+      border-radius: 12px 12px 0 0;
+      background: url('../public/avatars/mr-vinodh.png') center bottom / cover no-repeat;
+    }
+
+    .btn-enter-vr {
+      width: 100%;
+      height: 42px;
+      border: none;
+      border-radius: 21px;
+      background: linear-gradient(135deg, #2563eb, #6366f1, #8b5cf6);
+      color: #ffffff;
+      font-size: 12.5px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      box-shadow: 0 8px 18px -4px rgba(79, 70, 229, 0.4);
+      cursor: pointer;
+    }
+
+    /* ─────────────────────────────────────────────────────────────
+       RESPONSIVE BREAKPOINTS
+    ───────────────────────────────────────────────────────────── */
+    @media (max-width: 1024px) {
+      .yatra-login-layout {
+        flex-direction: column;
+        overflow-x: hidden;
+        overflow-y: auto;
+        align-items: stretch;
+      }
+      .yatra-form-column {
+        width: calc(100% - 32px);
+        max-width: 520px;
+        min-width: unset;
+        margin: 20px auto 10px auto;
+        height: auto;
+        min-height: auto;
+        background: linear-gradient(135deg, #f0f7ff 0%, #f5f3ff 50%, #eff6ff 100%);
+        border-radius: 28px;
+        border: 1.5px solid rgba(255, 255, 255, 0.9);
+        filter: drop-shadow(0 14px 28px rgba(37, 99, 235, 0.08));
+      }
+      .curved-panel-bg {
+        display: none;
+      }
+      .form-container {
+        max-width: 100%;
+        padding: 36px 24px;
+        margin: 0 auto;
+      }
+      .yatra-showcase-column {
+        height: 440px;
+        flex: none;
+        width: 100%;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Hidden SVG Gradients for Progress Rings -->
+  <svg width="0" height="0" style="position: absolute;">
+    <defs>
+      <linearGradient id="greenCyanGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="#10b981" />
+        <stop offset="60%" stop-color="#06b6d4" />
+        <stop offset="100%" stop-color="#3b82f6" />
+      </linearGradient>
+      <linearGradient id="purpleCyanGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="#6366f1" />
+        <stop offset="60%" stop-color="#06b6d4" />
+        <stop offset="100%" stop-color="#10b981" />
+      </linearGradient>
+    </defs>
+  </svg>
+
+  <div class="yatra-login-layout">
+
+    <!-- ─────────────────────────────────────────────────────────────
+         LEFT PANEL: CURVED FLOATING CARD (MATCHING APPROVED SPEC)
+    ───────────────────────────────────────────────────────────── -->
+    <div class="yatra-form-column">
+      
+      <!-- SVG Organic Curved Background with Soft Icy-Blue & Lavender Gradient -->
+      <svg class="curved-panel-bg" viewBox="0 0 540 880" preserveAspectRatio="none" aria-hidden="true">
+        <defs>
+          <linearGradient id="panelGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#eff6ff" stop-opacity="0.96" />
+            <stop offset="35%" stop-color="#f5f3ff" stop-opacity="0.93" />
+            <stop offset="70%" stop-color="#eff6ff" stop-opacity="0.95" />
+            <stop offset="100%" stop-color="#e9f2fe" stop-opacity="0.97" />
+          </linearGradient>
+
+          <linearGradient id="strokeGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#ffffff" stop-opacity="0.9" />
+            <stop offset="50%" stop-color="#e0e7ff" stop-opacity="0.6" />
+            <stop offset="100%" stop-color="#dbeafe" stop-opacity="0.7" />
+          </linearGradient>
+
+          <filter id="panelGlow" x="-10%" y="-10%" width="125%" height="120%">
+            <feDropShadow dx="12" dy="20" stdDeviation="24" flood-color="#3b82f6" flood-opacity="0.08" />
+            <feDropShadow dx="4" dy="8" stdDeviation="12" flood-color="#7c3aed" flood-opacity="0.05" />
+          </filter>
+        </defs>
+
+        <path class="panel-curve-path"
+              d="M 36,0 
+                 L 430,0 
+                 C 480,0 532,60 532,180 
+                 C 532,285 438,325 434,430 
+                 C 430,535 498,585 496,690 
+                 C 494,790 435,880 375,880 
+                 L 36,880 
+                 C 16,880 0,864 0,844 
+                 L 0,36 
+                 C 0,16 16,0 36,0 Z" 
+              fill="url(#panelGradient)" 
+              stroke="url(#strokeGradient)" 
+              stroke-width="1.5"
+              filter="url(#panelGlow)" />
+      </svg>
+
+      <div class="form-container">
+        
+        <!-- YATRA Brand Logo -->
+        <div class="brand-header">
+          <div class="brand-badge">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+              <path d="M12 3L3 20H8.5L12 12.5L15.5 20H21L12 3Z" fill="#ffffff" />
+            </svg>
+          </div>
+          <span class="brand-name">YATRA</span>
+        </div>
+
+        <!-- Heading & Subtitle -->
+        <h1 class="form-title">
+          Your Next<br>
+          <span class="highlight-opportunity">Opportunity</span><br>
+          Starts Here.
+        </h1>
+        <p class="form-subtitle">
+          AI-powered interview preparation, resume intelligence, job discovery, and career growth — all in one platform.
+        </p>
+
+        <!-- Continue with Google Button -->
+        <button type="button" class="btn-google">
+          <svg width="20" height="20" viewBox="0 0 24 24">
+            <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+            <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+            <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
+            <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
+          </svg>
+          Continue with Google
+        </button>
+
+        <!-- Divider -->
+        <div class="divider-row">
+          <div class="divider-line"></div>
+          <span class="divider-text">OR</span>
+          <div class="divider-line"></div>
+        </div>
+
+        <!-- Input Fields -->
+        <form onsubmit="event.preventDefault();">
+          <div class="field-group">
+            
+            <!-- Email -->
+            <div class="input-wrapper">
+              <span class="input-icon">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect width="20" height="16" x="2" y="4" rx="2" />
+                  <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
+                </svg>
+              </span>
+              <input type="email" class="form-input" placeholder="Enter your email" autocomplete="email" />
+            </div>
+
+            <!-- Password -->
+            <div class="input-wrapper">
+              <span class="input-icon">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
+                  <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                </svg>
+              </span>
+              <input type="password" id="passwordInput" class="form-input has-eye" placeholder="Enter your password" autocomplete="current-password" />
+              <button type="button" class="input-eye" onclick="togglePasswordVisibility()" aria-label="Toggle password visibility">
+                <svg id="eyeIcon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 .696 10.75 10.75 0 0 1-19.876 0" />
+                  <circle cx="12" cy="12" r="3" />
+                </svg>
+              </button>
+            </div>
+
+          </div>
+
+          <!-- Forgot Password -->
+          <div class="forgot-pass-row">
+            <a href="#forgot" class="forgot-link">Forgot password?</a>
+          </div>
+
+          <!-- Sign In Submit Button -->
+          <button type="submit" class="btn-submit">
+            Sign In &rarr;
+          </button>
+        </form>
+
+        <!-- Create Account Footer -->
+        <div class="form-footer">
+          Don't have an account? <a href="#signup" class="signup-link">Create account</a>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ─────────────────────────────────────────────────────────────
+         RIGHT PANEL: CONTINUOUS DIAGONAL PHONE SHOWCASE
+         Conveyor Motion: TOP-RIGHT → BOTTOM-LEFT
+         4-Set Redundant Array for 100% Seamless Infinite Looping
+    ───────────────────────────────────────────────────────────── -->
+    <div class="yatra-showcase-column">
+      <div class="showcase-vignette-mask"></div>
+
+      <div class="conveyor-viewport">
+        <div class="conveyor-track">
+
+          <!-- ══════════════════════════════════════════════════════
+               STREAM 1: Resume Intelligence | AI Interview | Job Discovery
+               Repeated 4x for continuous seamless loop
+          ══════════════════════════════════════════════════════ -->
+          <div class="phone-stream-row">
+
+            <!-- Macro definition for Stream 1 items (4 sets) -->
+            <!-- SET 1 -->
+            <!-- Phone 1: Resume Intelligence -->
+            <div class="phone-mockup">
+              <div class="phone-notch"><span class="phone-camera-dot"></span></div>
+              <div class="phone-status-bar"><span>10:20</span><div class="status-icons"><svg width="12" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3c-4.97 0-9 4.03-9 9 0 2.12.74 4.07 1.97 5.61L12 22l7.03-4.39C20.26 16.07 21 14.12 21 12c0-4.97-4.03-9-9-9z"/></svg><svg width="12" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="2" y="6" width="18" height="12" rx="2"/><path d="M22 10v4"/></svg></div></div>
+              <div class="screen-header"><div class="screen-icon-badge"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></div><span class="screen-title">Resume Intelligence</span></div>
+              <div class="screen-content"><div class="gauge-wrapper"><svg class="gauge-svg" viewBox="0 0 120 120"><circle class="gauge-circle-bg" cx="60" cy="60" r="47" /><circle class="gauge-circle-progress" cx="60" cy="60" r="47" /></svg><div class="gauge-label-center"><span class="gauge-score-value">92%</span><span class="gauge-score-sub">Profile Score</span></div></div><div class="checklist-container"><div class="checklist-row"><div class="check-left"><span class="check-bullet">&#10003;</span><span class="check-text">Skills Extracted</span></div><span class="check-arrow">&rsaquo;</span></div><div class="checklist-row"><div class="check-left"><span class="check-bullet">&#10003;</span><span class="check-text">Projects Identified</span></div><span class="check-arrow">&rsaquo;</span></div><div class="checklist-row"><div class="check-left"><span class="check-bullet">&#10003;</span><span class="check-text">Role Match</span></div><span class="check-arrow">&rsaquo;</span></div></div></div>
+            </div>
+
+            <!-- Phone 2: AI Interview -->
+            <div class="phone-mockup">
+              <div class="phone-notch"><span class="phone-camera-dot"></span></div>
+              <div class="phone-status-bar"><span>10:20</span><div class="status-icons"><svg width="12" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3c-4.97 0-9 4.03-9 9 0 2.12.74 4.07 1.97 5.61L12 22l7.03-4.39C20.26 16.07 21 14.12 21 12c0-4.97-4.03-9-9-9z"/></svg><svg width="12" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="2" y="6" width="18" height="12" rx="2"/><path d="M22 10v4"/></svg></div></div>
+              <div class="screen-header"><div class="screen-icon-badge"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div><span class="screen-title">AI Interview</span></div>
+              <div class="screen-content"><div class="avatar-wrapper"><div class="avatar-img-box"><img src="../public/assets/ai_interviewer_avatar.jpg" alt="AI Interviewer" onerror="this.onerror=null; this.src='https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=300&auto=format&fit=crop&q=80';" /></div><div class="waveform-bar-box"><span class="wave-bar"></span><span class="wave-bar"></span><span class="wave-bar"></span><span class="wave-bar"></span><span class="wave-bar"></span><span class="wave-bar"></span><span class="wave-bar"></span><span class="wave-bar"></span></div></div><div class="question-speech-box">Q1. Tell me about a project you're proud of.</div><div class="mic-button-row"><div class="mic-circle-btn"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg></div></div></div>
+            </div>
+
+            <!-- Phone 3: Job Discovery -->
+            <div class="phone-mockup">
+              <div class="phone-notch"><span class="phone-camera-dot"></span></div>
+              <div class="phone-status-bar"><span>10:20</span><div class="status-icons"><svg width="12" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3c-4.97 0-9 4.03-9 9 0 2.12.74 4.07 1.97 5.61L12 22l7.03-4.39C20.26 16.07 21 14.12 21 12c0-4.97-4.03-9-9-9z"/></svg><svg width="12" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="2" y="6" width="18" height="12" rx="2"/><path d="M22 10v4"/></svg></div></div>
+              <div class="screen-header"><div class="screen-icon-badge"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="20" height="14" x="2" y="7" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg></div><span class="screen-title">Job Discovery</span></div>
+              <div class="screen-content"><div class="job-cards-col"><div class="job-item-card"><div class="job-card-left"><div class="company-logo-sq"><svg width="18" height="18" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" /><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" /><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" /><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" /></svg></div><div class="company-info-text"><span class="company-name-bold">Google</span><span class="role-title-gray">Software Engineer</span></div></div><span class="job-arrow-icon">&rsaquo;</span></div><div class="job-item-card"><div class="job-card-left"><div class="company-logo-sq"><svg width="18" height="18" viewBox="0 0 24 24"><rect x="2" y="2" width="9" height="9" fill="#f25022"/><rect x="13" y="2" width="9" height="9" fill="#7fba00"/><rect x="2" y="13" width="9" height="9" fill="#00a4ef"/><rect x="13" y="13" width="9" height="9" fill="#ffb900"/></svg></div><div class="company-info-text"><span class="company-name-bold">Microsoft</span><span class="role-title-gray">SDE Intern</span></div></div><span class="job-arrow-icon">&rsaquo;</span></div><div class="job-item-card"><div class="job-card-left"><div class="company-logo-sq"><svg width="18" height="18" viewBox="0 0 24 24" fill="#0f172a"><path d="M13.9 14.8c-.8 0-1.4-.4-1.7-1.1-.3.7-.9 1.1-1.7 1.1-1.2 0-2.1-1-2.1-2.4 0-1.4.9-2.4 2.1-2.4.8 0 1.4.4 1.7 1.1.3-.7.9-1.1 1.7-1.1 1.2 0 2.1 1 2.1 2.4 0 1.4-.9 2.4-2.1 2.4z"/><path d="M4 19c6 3.5 12 3 16 0-1 1-5 2.5-9 2.5-3 0-5-.5-7-2.5z" fill="#f59e0b"/></svg></div><div class="company-info-text"><span class="company-name-bold">Amazon</span><span class="role-title-gray">Backend Engineer</span></div></div><span class="job-arrow-icon">&rsaquo;</span></div></div></div>
+            </div>
+
+            <!-- SET 2 -->
+            <!-- Phone 1 (Set 2) -->
+            <div class="phone-mockup">
+              <div class="phone-notch"><span class="phone-camera-dot"></span></div>
+              <div class="phone-status-bar"><span>10:20</span><div class="status-icons"><svg width="12" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3c-4.97 0-9 4.03-9 9 0 2.12.74 4.07 1.97 5.61L12 22l7.03-4.39C20.26 16.07 21 14.12 21 12c0-4.97-4.03-9-9-9z"/></svg><svg width="12" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="2" y="6" width="18" height="12" rx="2"/><path d="M22 10v4"/></svg></div></div>
+              <div class="screen-header"><div class="screen-icon-badge"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div><span class="screen-title">Resume Intelligence</span></div>
+              <div class="screen-content"><div class="gauge-wrapper"><svg class="gauge-svg" viewBox="0 0 120 120"><circle class="gauge-circle-bg" cx="60" cy="60" r="47" /><circle class="gauge-circle-progress" cx="60" cy="60" r="47" /></svg><div class="gauge-label-center"><span class="gauge-score-value">92%</span><span class="gauge-score-sub">Profile Score</span></div></div><div class="checklist-container"><div class="checklist-row"><div class="check-left"><span class="check-bullet">&#10003;</span><span class="check-text">Skills Extracted</span></div><span class="check-arrow">&rsaquo;</span></div><div class="checklist-row"><div class="check-left"><span class="check-bullet">&#10003;</span><span class="check-text">Projects Identified</span></div><span class="check-arrow">&rsaquo;</span></div><div class="checklist-row"><div class="check-left"><span class="check-bullet">&#10003;</span><span class="check-text">Role Match</span></div><span class="check-arrow">&rsaquo;</span></div></div></div>
+            </div>
+
+            <!-- Phone 2 (Set 2) -->
+            <div class="phone-mockup">
+              <div class="phone-notch"><span class="phone-camera-dot"></span></div>
+              <div class="phone-status-bar"><span>10:20</span><div class="status-icons"><svg width="12" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3c-4.97 0-9 4.03-9 9 0 2.12.74 4.07 1.97 5.61L12 22l7.03-4.39C20.26 16.07 21 14.12 21 12c0-4.97-4.03-9-9-9z"/></svg><svg width="12" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="2" y="6" width="18" height="12" rx="2"/><path d="M22 10v4"/></svg></div></div>
+              <div class="screen-header"><div class="screen-icon-badge"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div><span class="screen-title">AI Interview</span></div>
+              <div class="screen-content"><div class="avatar-wrapper"><div class="avatar-img-box"><img src="../public/assets/ai_interviewer_avatar.jpg" alt="AI Interviewer" onerror="this.onerror=null; this.src='https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=300&auto=format&fit=crop&q=80';" /></div><div class="waveform-bar-box"><span class="wave-bar"></span><span class="wave-bar"></span><span class="wave-bar"></span><span class="wave-bar"></span><span class="wave-bar"></span><span class="wave-bar"></span><span class="wave-bar"></span><span class="wave-bar"></span></div></div><div class="question-speech-box">Q1. Tell me about a project you're proud of.</div><div class="mic-button-row"><div class="mic-circle-btn"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg></div></div></div>
+            </div>
+
+            <!-- Phone 3 (Set 2) -->
+            <div class="phone-mockup">
+              <div class="phone-notch"><span class="phone-camera-dot"></span></div>
+              <div class="phone-status-bar"><span>10:20</span><div class="status-icons"><svg width="12" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3c-4.97 0-9 4.03-9 9 0 2.12.74 4.07 1.97 5.61L12 22l7.03-4.39C20.26 16.07 21 14.12 21 12c0-4.97-4.03-9-9-9z"/></svg><svg width="12" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="2" y="6" width="18" height="12" rx="2"/><path d="M22 10v4"/></svg></div></div>
+              <div class="screen-header"><div class="screen-icon-badge"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="20" height="14" x="2" y="7" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg></div><span class="screen-title">Job Discovery</span></div>
+              <div class="screen-content"><div class="job-cards-col"><div class="job-item-card"><div class="job-card-left"><div class="company-logo-sq"><svg width="18" height="18" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" /><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" /><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" /><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" /></svg></div><div class="company-info-text"><span class="company-name-bold">Google</span><span class="role-title-gray">Software Engineer</span></div></div><span class="job-arrow-icon">&rsaquo;</span></div><div class="job-item-card"><div class="job-card-left"><div class="company-logo-sq"><svg width="18" height="18" viewBox="0 0 24 24"><rect x="2" y="2" width="9" height="9" fill="#f25022"/><rect x="13" y="2" width="9" height="9" fill="#7fba00"/><rect x="2" y="13" width="9" height="9" fill="#00a4ef"/><rect x="13" y="13" width="9" height="9" fill="#ffb900"/></svg></div><div class="company-info-text"><span class="company-name-bold">Microsoft</span><span class="role-title-gray">SDE Intern</span></div></div><span class="job-arrow-icon">&rsaquo;</span></div><div class="job-item-card"><div class="job-card-left"><div class="company-logo-sq"><svg width="18" height="18" viewBox="0 0 24 24" fill="#0f172a"><path d="M13.9 14.8c-.8 0-1.4-.4-1.7-1.1-.3.7-.9 1.1-1.7 1.1-1.2 0-2.1-1-2.1-2.4 0-1.4.9-2.4 2.1-2.4.8 0 1.4.4 1.7 1.1.3-.7.9-1.1 1.7-1.1 1.2 0 2.1 1 2.1 2.4 0 1.4-.9 2.4-2.1 2.4z"/><path d="M4 19c6 3.5 12 3 16 0-1 1-5 2.5-9 2.5-3 0-5-.5-7-2.5z" fill="#f59e0b"/></svg></div><div class="company-info-text"><span class="company-name-bold">Amazon</span><span class="role-title-gray">Backend Engineer</span></div></div><span class="job-arrow-icon">&rsaquo;</span></div></div></div>
+            </div>
+
+            <!-- SET 3 -->
+            <!-- Phone 1 (Set 3) -->
+            <div class="phone-mockup">
+              <div class="phone-notch"><span class="phone-camera-dot"></span></div>
+              <div class="phone-status-bar"><span>10:20</span><div class="status-icons"><svg width="12" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3c-4.97 0-9 4.03-9 9 0 2.12.74 4.07 1.97 5.61L12 22l7.03-4.39C20.26 16.07 21 14.12 21 12c0-4.97-4.03-9-9-9z"/></svg><svg width="12" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="2" y="6" width="18" height="12" rx="2"/><path d="M22 10v4"/></svg></div></div>
+              <div class="screen-header"><div class="screen-icon-badge"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div><span class="screen-title">Resume Intelligence</span></div>
+              <div class="screen-content"><div class="gauge-wrapper"><svg class="gauge-svg" viewBox="0 0 120 120"><circle class="gauge-circle-bg" cx="60" cy="60" r="47" /><circle class="gauge-circle-progress" cx="60" cy="60" r="47" /></svg><div class="gauge-label-center"><span class="gauge-score-value">92%</span><span class="gauge-score-sub">Profile Score</span></div></div><div class="checklist-container"><div class="checklist-row"><div class="check-left"><span class="check-bullet">&#10003;</span><span class="check-text">Skills Extracted</span></div><span class="check-arrow">&rsaquo;</span></div><div class="checklist-row"><div class="check-left"><span class="check-bullet">&#10003;</span><span class="check-text">Projects Identified</span></div><span class="check-arrow">&rsaquo;</span></div><div class="checklist-row"><div class="check-left"><span class="check-bullet">&#10003;</span><span class="check-text">Role Match</span></div><span class="check-arrow">&rsaquo;</span></div></div></div>
+            </div>
+
+            <!-- Phone 2 (Set 3) -->
+            <div class="phone-mockup">
+              <div class="phone-notch"><span class="phone-camera-dot"></span></div>
+              <div class="phone-status-bar"><span>10:20</span><div class="status-icons"><svg width="12" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3c-4.97 0-9 4.03-9 9 0 2.12.74 4.07 1.97 5.61L12 22l7.03-4.39C20.26 16.07 21 14.12 21 12c0-4.97-4.03-9-9-9z"/></svg><svg width="12" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="2" y="6" width="18" height="12" rx="2"/><path d="M22 10v4"/></svg></div></div>
+              <div class="screen-header"><div class="screen-icon-badge"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div><span class="screen-title">AI Interview</span></div>
+              <div class="screen-content"><div class="avatar-wrapper"><div class="avatar-img-box"><img src="../public/assets/ai_interviewer_avatar.jpg" alt="AI Interviewer" onerror="this.onerror=null; this.src='https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=300&auto=format&fit=crop&q=80';" /></div><div class="waveform-bar-box"><span class="wave-bar"></span><span class="wave-bar"></span><span class="wave-bar"></span><span class="wave-bar"></span><span class="wave-bar"></span><span class="wave-bar"></span><span class="wave-bar"></span><span class="wave-bar"></span></div></div><div class="question-speech-box">Q1. Tell me about a project you're proud of.</div><div class="mic-button-row"><div class="mic-circle-btn"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg></div></div></div>
+            </div>
+
+            <!-- Phone 3 (Set 3) -->
+            <div class="phone-mockup">
+              <div class="phone-notch"><span class="phone-camera-dot"></span></div>
+              <div class="phone-status-bar"><span>10:20</span><div class="status-icons"><svg width="12" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3c-4.97 0-9 4.03-9 9 0 2.12.74 4.07 1.97 5.61L12 22l7.03-4.39C20.26 16.07 21 14.12 21 12c0-4.97-4.03-9-9-9z"/></svg><svg width="12" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="2" y="6" width="18" height="12" rx="2"/><path d="M22 10v4"/></svg></div></div>
+              <div class="screen-header"><div class="screen-icon-badge"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="20" height="14" x="2" y="7" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg></div><span class="screen-title">Job Discovery</span></div>
+              <div class="screen-content"><div class="job-cards-col"><div class="job-item-card"><div class="job-card-left"><div class="company-logo-sq"><svg width="18" height="18" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" /><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" /><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" /><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" /></svg></div><div class="company-info-text"><span class="company-name-bold">Google</span><span class="role-title-gray">Software Engineer</span></div></div><span class="job-arrow-icon">&rsaquo;</span></div><div class="job-item-card"><div class="job-card-left"><div class="company-logo-sq"><svg width="18" height="18" viewBox="0 0 24 24"><rect x="2" y="2" width="9" height="9" fill="#f25022"/><rect x="13" y="2" width="9" height="9" fill="#7fba00"/><rect x="2" y="13" width="9" height="9" fill="#00a4ef"/><rect x="13" y="13" width="9" height="9" fill="#ffb900"/></svg></div><div class="company-info-text"><span class="company-name-bold">Microsoft</span><span class="role-title-gray">SDE Intern</span></div></div><span class="job-arrow-icon">&rsaquo;</span></div><div class="job-item-card"><div class="job-card-left"><div class="company-logo-sq"><svg width="18" height="18" viewBox="0 0 24 24" fill="#0f172a"><path d="M13.9 14.8c-.8 0-1.4-.4-1.7-1.1-.3.7-.9 1.1-1.7 1.1-1.2 0-2.1-1-2.1-2.4 0-1.4.9-2.4 2.1-2.4.8 0 1.4.4 1.7 1.1.3-.7.9-1.1 1.7-1.1 1.2 0 2.1 1 2.1 2.4 0 1.4-.9 2.4-2.1 2.4z"/><path d="M4 19c6 3.5 12 3 16 0-1 1-5 2.5-9 2.5-3 0-5-.5-7-2.5z" fill="#f59e0b"/></svg></div><div class="company-info-text"><span class="company-name-bold">Amazon</span><span class="role-title-gray">Backend Engineer</span></div></div><span class="job-arrow-icon">&rsaquo;</span></div></div></div>
+            </div>
+
+          </div>
+
+          <!-- ══════════════════════════════════════════════════════
+               STREAM 2: Performance Analytics | Career Roadmap | VR Interview
+               Repeated 4x for continuous seamless loop
+          ══════════════════════════════════════════════════════ -->
+          <div class="phone-stream-row row-staggered">
+
+            <!-- SET 1 -->
+            <!-- Phone 4: Performance Analytics -->
+            <div class="phone-mockup">
+              <div class="phone-notch"><span class="phone-camera-dot"></span></div>
+              <div class="phone-status-bar"><span>10:20</span><div class="status-icons"><svg width="12" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3c-4.97 0-9 4.03-9 9 0 2.12.74 4.07 1.97 5.61L12 22l7.03-4.39C20.26 16.07 21 14.12 21 12c0-4.97-4.03-9-9-9z"/></svg><svg width="12" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="2" y="6" width="18" height="12" rx="2"/><path d="M22 10v4"/></svg></div></div>
+              <div class="screen-header"><div class="screen-icon-badge"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></div><span class="screen-title">Performance Analytics</span></div>
+              <div class="screen-content"><div class="gauge-wrapper"><svg class="gauge-svg" viewBox="0 0 120 120"><circle class="gauge-circle-bg" cx="60" cy="60" r="47" /><circle class="analytics-gauge-progress" cx="60" cy="60" r="47" /></svg><div class="gauge-label-center"><span class="gauge-score-value">88%</span><span class="gauge-score-sub">Overall Score</span></div></div><div class="skills-bars-col"><div class="skill-bar-item"><div class="skill-bar-labels"><span>Technical</span><span class="skill-percent-bold">88%</span></div><div class="skill-track-bg"><div class="skill-fill-gradient" style="width: 88%;"></div></div></div><div class="skill-bar-item"><div class="skill-bar-labels"><span>Problem Solving</span><span class="skill-percent-bold">86%</span></div><div class="skill-track-bg"><div class="skill-fill-gradient" style="width: 86%;"></div></div></div><div class="skill-bar-item"><div class="skill-bar-labels"><span>Communication</span><span class="skill-percent-bold">87%</span></div><div class="skill-track-bg"><div class="skill-fill-gradient" style="width: 87%;"></div></div></div></div></div>
+            </div>
+
+            <!-- Phone 5: Career Roadmap -->
+            <div class="phone-mockup">
+              <div class="phone-notch"><span class="phone-camera-dot"></span></div>
+              <div class="phone-status-bar"><span>10:20</span><div class="status-icons"><svg width="12" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3c-4.97 0-9 4.03-9 9 0 2.12.74 4.07 1.97 5.61L12 22l7.03-4.39C20.26 16.07 21 14.12 21 12c0-4.97-4.03-9-9-9z"/></svg><svg width="12" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="2" y="6" width="18" height="12" rx="2"/><path d="M22 10v4"/></svg></div></div>
+              <div class="screen-header"><div class="screen-icon-badge"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg></div><span class="screen-title">Career Roadmap</span></div>
+              <div class="screen-content"><div class="roadmap-timeline-col"><div class="timeline-step-row"><div class="timeline-axis-line"></div><div class="step-node-circle node-completed">&#10003;</div><div class="step-info-col"><span class="step-title-bold">Strengthen DSA</span><span class="status-badge-text status-green">Completed</span></div></div><div class="timeline-step-row"><div class="timeline-axis-line"></div><div class="step-node-circle node-progress">&bull;</div><div class="step-info-col"><span class="step-title-bold">System Design</span><span class="status-badge-text status-blue">In Progress</span></div></div><div class="timeline-step-row"><div class="step-node-circle node-next">&bull;</div><div class="step-info-col"><span class="step-title-bold">Build Projects</span><span class="status-badge-text status-purple">Next</span></div></div></div></div>
+            </div>
+
+            <!-- Phone 6: VR Interview -->
+            <div class="phone-mockup">
+              <div class="phone-notch"><span class="phone-camera-dot"></span></div>
+              <div class="phone-status-bar"><span>10:20</span><div class="status-icons"><svg width="12" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3c-4.97 0-9 4.03-9 9 0 2.12.74 4.07 1.97 5.61L12 22l7.03-4.39C20.26 16.07 21 14.12 21 12c0-4.97-4.03-9-9-9z"/></svg><svg width="12" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="2" y="6" width="18" height="12" rx="2"/><path d="M22 10v4"/></svg></div></div>
+              <div class="screen-header"><div class="screen-icon-badge"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 8a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8z"/><circle cx="8" cy="12" r="2.5"/><circle cx="16" cy="12" r="2.5"/></svg></div><span class="screen-title">VR Interview</span></div>
+              <div class="screen-content"><div class="vr-room-preview"><div class="vr-halo-ring"></div><div class="vr-canvas-fallback"><div class="vr-interviewer-silhouette"></div></div></div><button type="button" class="btn-enter-vr">Enter VR Interview &rarr;</button></div>
+            </div>
+
+            <!-- SET 2 -->
+            <!-- Phone 4 (Set 2) -->
+            <div class="phone-mockup">
+              <div class="phone-notch"><span class="phone-camera-dot"></span></div>
+              <div class="phone-status-bar"><span>10:20</span><div class="status-icons"><svg width="12" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3c-4.97 0-9 4.03-9 9 0 2.12.74 4.07 1.97 5.61L12 22l7.03-4.39C20.26 16.07 21 14.12 21 12c0-4.97-4.03-9-9-9z"/></svg><svg width="12" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="2" y="6" width="18" height="12" rx="2"/><path d="M22 10v4"/></svg></div></div>
+              <div class="screen-header"><div class="screen-icon-badge"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></div><span class="screen-title">Performance Analytics</span></div>
+              <div class="screen-content"><div class="gauge-wrapper"><svg class="gauge-svg" viewBox="0 0 120 120"><circle class="gauge-circle-bg" cx="60" cy="60" r="47" /><circle class="analytics-gauge-progress" cx="60" cy="60" r="47" /></svg><div class="gauge-label-center"><span class="gauge-score-value">88%</span><span class="gauge-score-sub">Overall Score</span></div></div><div class="skills-bars-col"><div class="skill-bar-item"><div class="skill-bar-labels"><span>Technical</span><span class="skill-percent-bold">88%</span></div><div class="skill-track-bg"><div class="skill-fill-gradient" style="width: 88%;"></div></div></div><div class="skill-bar-item"><div class="skill-bar-labels"><span>Problem Solving</span><span class="skill-percent-bold">86%</span></div><div class="skill-track-bg"><div class="skill-fill-gradient" style="width: 86%;"></div></div></div><div class="skill-bar-item"><div class="skill-bar-labels"><span>Communication</span><span class="skill-percent-bold">87%</span></div><div class="skill-track-bg"><div class="skill-fill-gradient" style="width: 87%;"></div></div></div></div></div>
+            </div>
+
+            <!-- Phone 5 (Set 2) -->
+            <div class="phone-mockup">
+              <div class="phone-notch"><span class="phone-camera-dot"></span></div>
+              <div class="phone-status-bar"><span>10:20</span><div class="status-icons"><svg width="12" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3c-4.97 0-9 4.03-9 9 0 2.12.74 4.07 1.97 5.61L12 22l7.03-4.39C20.26 16.07 21 14.12 21 12c0-4.97-4.03-9-9-9z"/></svg><svg width="12" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="2" y="6" width="18" height="12" rx="2"/><path d="M22 10v4"/></svg></div></div>
+              <div class="screen-header"><div class="screen-icon-badge"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg></div><span class="screen-title">Career Roadmap</span></div>
+              <div class="screen-content"><div class="roadmap-timeline-col"><div class="timeline-step-row"><div class="timeline-axis-line"></div><div class="step-node-circle node-completed">&#10003;</div><div class="step-info-col"><span class="step-title-bold">Strengthen DSA</span><span class="status-badge-text status-green">Completed</span></div></div><div class="timeline-step-row"><div class="timeline-axis-line"></div><div class="step-node-circle node-progress">&bull;</div><div class="step-info-col"><span class="step-title-bold">System Design</span><span class="status-badge-text status-blue">In Progress</span></div></div><div class="timeline-step-row"><div class="step-node-circle node-next">&bull;</div><div class="step-info-col"><span class="step-title-bold">Build Projects</span><span class="status-badge-text status-purple">Next</span></div></div></div></div>
+            </div>
+
+            <!-- Phone 6 (Set 2) -->
+            <div class="phone-mockup">
+              <div class="phone-notch"><span class="phone-camera-dot"></span></div>
+              <div class="phone-status-bar"><span>10:20</span><div class="status-icons"><svg width="12" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3c-4.97 0-9 4.03-9 9 0 2.12.74 4.07 1.97 5.61L12 22l7.03-4.39C20.26 16.07 21 14.12 21 12c0-4.97-4.03-9-9-9z"/></svg><svg width="12" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="2" y="6" width="18" height="12" rx="2"/><path d="M22 10v4"/></svg></div></div>
+              <div class="screen-header"><div class="screen-icon-badge"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 8a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8z"/><circle cx="8" cy="12" r="2.5"/><circle cx="16" cy="12" r="2.5"/></svg></div><span class="screen-title">VR Interview</span></div>
+              <div class="screen-content"><div class="vr-room-preview"><div class="vr-halo-ring"></div><div class="vr-canvas-fallback"><div class="vr-interviewer-silhouette"></div></div></div><button type="button" class="btn-enter-vr">Enter VR Interview &rarr;</button></div>
+            </div>
+
+            <!-- SET 3 -->
+            <!-- Phone 4 (Set 3) -->
+            <div class="phone-mockup">
+              <div class="phone-notch"><span class="phone-camera-dot"></span></div>
+              <div class="phone-status-bar"><span>10:20</span><div class="status-icons"><svg width="12" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3c-4.97 0-9 4.03-9 9 0 2.12.74 4.07 1.97 5.61L12 22l7.03-4.39C20.26 16.07 21 14.12 21 12c0-4.97-4.03-9-9-9z"/></svg><svg width="12" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="2" y="6" width="18" height="12" rx="2"/><path d="M22 10v4"/></svg></div></div>
+              <div class="screen-header"><div class="screen-icon-badge"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></div><span class="screen-title">Performance Analytics</span></div>
+              <div class="screen-content"><div class="gauge-wrapper"><svg class="gauge-svg" viewBox="0 0 120 120"><circle class="gauge-circle-bg" cx="60" cy="60" r="47" /><circle class="analytics-gauge-progress" cx="60" cy="60" r="47" /></svg><div class="gauge-label-center"><span class="gauge-score-value">88%</span><span class="gauge-score-sub">Overall Score</span></div></div><div class="skills-bars-col"><div class="skill-bar-item"><div class="skill-bar-labels"><span>Technical</span><span class="skill-percent-bold">88%</span></div><div class="skill-track-bg"><div class="skill-fill-gradient" style="width: 88%;"></div></div></div><div class="skill-bar-item"><div class="skill-bar-labels"><span>Problem Solving</span><span class="skill-percent-bold">86%</span></div><div class="skill-track-bg"><div class="skill-fill-gradient" style="width: 86%;"></div></div></div><div class="skill-bar-item"><div class="skill-bar-labels"><span>Communication</span><span class="skill-percent-bold">87%</span></div><div class="skill-track-bg"><div class="skill-fill-gradient" style="width: 87%;"></div></div></div></div></div>
+            </div>
+
+            <!-- Phone 5 (Set 3) -->
+            <div class="phone-mockup">
+              <div class="phone-notch"><span class="phone-camera-dot"></span></div>
+              <div class="phone-status-bar"><span>10:20</span><div class="status-icons"><svg width="12" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3c-4.97 0-9 4.03-9 9 0 2.12.74 4.07 1.97 5.61L12 22l7.03-4.39C20.26 16.07 21 14.12 21 12c0-4.97-4.03-9-9-9z"/></svg><svg width="12" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="2" y="6" width="18" height="12" rx="2"/><path d="M22 10v4"/></svg></div></div>
+              <div class="screen-header"><div class="screen-icon-badge"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg></div><span class="screen-title">Career Roadmap</span></div>
+              <div class="screen-content"><div class="roadmap-timeline-col"><div class="timeline-step-row"><div class="timeline-axis-line"></div><div class="step-node-circle node-completed">&#10003;</div><div class="step-info-col"><span class="step-title-bold">Strengthen DSA</span><span class="status-badge-text status-green">Completed</span></div></div><div class="timeline-step-row"><div class="timeline-axis-line"></div><div class="step-node-circle node-progress">&bull;</div><div class="step-info-col"><span class="step-title-bold">System Design</span><span class="status-badge-text status-blue">In Progress</span></div></div><div class="timeline-step-row"><div class="step-node-circle node-next">&bull;</div><div class="step-info-col"><span class="step-title-bold">Build Projects</span><span class="status-badge-text status-purple">Next</span></div></div></div></div>
+            </div>
+
+            <!-- Phone 6 (Set 3) -->
+            <div class="phone-mockup">
+              <div class="phone-notch"><span class="phone-camera-dot"></span></div>
+              <div class="phone-status-bar"><span>10:20</span><div class="status-icons"><svg width="12" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3c-4.97 0-9 4.03-9 9 0 2.12.74 4.07 1.97 5.61L12 22l7.03-4.39C20.26 16.07 21 14.12 21 12c0-4.97-4.03-9-9-9z"/></svg><svg width="12" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="2" y="6" width="18" height="12" rx="2"/><path d="M22 10v4"/></svg></div></div>
+              <div class="screen-header"><div class="screen-icon-badge"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 8a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8z"/><circle cx="8" cy="12" r="2.5"/><circle cx="16" cy="12" r="2.5"/></svg></div><span class="screen-title">VR Interview</span></div>
+              <div class="screen-content"><div class="vr-room-preview"><div class="vr-halo-ring"></div><div class="vr-canvas-fallback"><div class="vr-interviewer-silhouette"></div></div></div><button type="button" class="btn-enter-vr">Enter VR Interview &rarr;</button></div>
+            </div>
+
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    // Password visibility toggle handler
+    function togglePasswordVisibility() {
+      const input = document.getElementById('passwordInput');
+      const eye = document.getElementById('eyeIcon');
+      if (input.type === 'password') {
+        input.type = 'text';
+        eye.innerHTML = `
+          <path d="M9.88 9.88a3 3 0 1 0 4.24 4.24" />
+          <path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68" />
+          <path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61" />
+          <line x1="2" y1="2" x2="22" y2="22" />
+        `;
+      } else {
+        input.type = 'password';
+        eye.innerHTML = `
+          <path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 .696 10.75 10.75 0 0 1-19.876 0" />
+          <circle cx="12" cy="12" r="3" />
+        `;
+      }
+    }
+  </script>
+</body>
+</html>
