@@ -4,9 +4,8 @@ import { ClerkProvider } from '@clerk/react';
 import App from './App.tsx';
 import './index.css';
 
-const CLERK_PUBLISHABLE_KEY =
-  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_CLERK_PUBLISHABLE_KEY) ||
-  "pk_test_d2VsY29tZWQtZWVsLTY0NDguY2xlcmsuYWNjb3VudHMuZGV2JA";
+const BUILD_CLERK_PUBLISHABLE_KEY =
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_CLERK_PUBLISHABLE_KEY?.trim()) || '';
 
 // Anti-circular safety console wrapper to protect external test runner telemetry from JSON.stringify failures
 (function() {
@@ -18,6 +17,10 @@ const CLERK_PUBLISHABLE_KEY =
 
       window.addEventListener('error', (event) => {
       const msg = event.message || '';
+      const src = event.filename || '';
+      if (msg.toLowerCase().includes('clerk') || src.toLowerCase().includes('clerk')) {
+        return;
+      }
       if (
         msg.includes('Script error.') || 
         msg.toLowerCase().includes('aframe') || 
@@ -193,10 +196,49 @@ const CLERK_PUBLISHABLE_KEY =
   }
 })();
 
-createRoot(document.getElementById('root')!).render(
-  CLERK_PUBLISHABLE_KEY ? (
+async function resolveClerkPublishableKey(): Promise<string> {
+  if (BUILD_CLERK_PUBLISHABLE_KEY) {
+    return BUILD_CLERK_PUBLISHABLE_KEY;
+  }
+  try {
+    const res = await fetch('/api/auth/config');
+    if (res.ok) {
+      const data = await res.json();
+      if (typeof data?.clerkPublishableKey === 'string' && data.clerkPublishableKey.trim() !== '') {
+        return data.clerkPublishableKey.trim();
+      }
+    }
+  } catch (err) {
+    console.error('[Clerk Auth] Failed to fetch runtime auth config:', err);
+  }
+  return '';
+}
+
+resolveClerkPublishableKey().then((publishableKey) => {
+  const rootEl = document.getElementById('root')!;
+  if (!publishableKey) {
+    console.error('[Clerk Auth] Missing VITE_CLERK_PUBLISHABLE_KEY.');
+    createRoot(rootEl).render(
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f8fafc', fontFamily: 'system-ui, sans-serif', padding: '24px' }}>
+        <div style={{ maxWidth: '460px', width: '100%', background: '#ffffff', border: '1px solid #fecaca', borderRadius: '16px', padding: '24px', boxShadow: '0 10px 25px rgba(0,0,0,0.06)' }}>
+          <h2 style={{ margin: '0 0 8px', fontSize: '18px', fontWeight: 700, color: '#991b1b' }}>
+            Authentication Configuration Missing
+          </h2>
+          <p style={{ margin: '0 0 12px', fontSize: '14px', lineHeight: 1.5, color: '#475569' }}>
+            Clerk authentication could not initialize because <code>VITE_CLERK_PUBLISHABLE_KEY</code> is not configured in this environment.
+          </p>
+          <p style={{ margin: 0, fontSize: '13px', color: '#64748b' }}>
+            Set <code>VITE_CLERK_PUBLISHABLE_KEY</code> and <code>CLERK_SECRET_KEY</code> in your Render Environment Variables and redeploy.
+          </p>
+        </div>
+      </div>
+    );
+    return;
+  }
+
+  createRoot(rootEl).render(
     <ClerkProvider
-      publishableKey={CLERK_PUBLISHABLE_KEY}
+      publishableKey={publishableKey}
       afterSignOutUrl="/"
       signInUrl="/"
       signUpUrl="/sign-up"
@@ -205,8 +247,6 @@ createRoot(document.getElementById('root')!).render(
     >
       <App />
     </ClerkProvider>
-  ) : (
-    <App />
-  )
-);
+  );
+});
 

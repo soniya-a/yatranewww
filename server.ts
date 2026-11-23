@@ -1014,6 +1014,20 @@ async function startServer() {
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
+  // ── Clerk Public Frontend Config Endpoint ─────────────────────────────────
+  // Exposes ONLY the public Clerk publishable key (never CLERK_SECRET_KEY)
+  // so production deployments work even if VITE_CLERK_PUBLISHABLE_KEY was set at runtime.
+  app.get("/api/auth/config", (_req, res) => {
+    const publishableKey = (
+      process.env.VITE_CLERK_PUBLISHABLE_KEY ||
+      process.env.CLERK_PUBLISHABLE_KEY ||
+      ""
+    ).trim();
+    res.json({
+      clerkPublishableKey: publishableKey || null,
+    });
+  });
+
   // ── Clerk Backend User Registration Endpoint ──────────────────────────────
   // Creates the Clerk user with full name (first_name, last_name, unsafe_metadata.fullName)
   // and consistent 8+ character password validation via the official Clerk Backend API.

@@ -376,10 +376,27 @@ export default function App() {
 
   // Fallback timeout so unauthenticated / sandbox / test environments never hang on Clerk SDK
   const [clerkTimeout, setClerkTimeout] = useState(false);
+  const [clerkInitError, setClerkInitError] = useState<string | null>(null);
   useEffect(() => {
-    const t = setTimeout(() => setClerkTimeout(true), 4000);
+    const t = setTimeout(() => setClerkTimeout(true), 8000);
     return () => clearTimeout(t);
   }, []);
+
+  useEffect(() => {
+    if (isUserLoaded && isAuthLoaded && isSignInLoaded) {
+      setClerkInitError(null);
+    } else if (clerkTimeout && (!isUserLoaded || !isAuthLoaded || !isSignInLoaded)) {
+      const msg =
+        "Authentication service failed to initialize on this domain. Please verify VITE_CLERK_PUBLISHABLE_KEY is configured for this domain and Clerk scripts are not blocked.";
+      console.error("[Clerk Auth] Initialization timeout:", {
+        isUserLoaded,
+        isAuthLoaded,
+        isSignInLoaded,
+        isSignUpLoaded,
+      });
+      setClerkInitError(msg);
+    }
+  }, [clerkTimeout, isUserLoaded, isAuthLoaded, isSignInLoaded, isSignUpLoaded]);
 
   // Authentication submission states
   const [isLoggingIn, setIsLoggingIn] = useState(false);
@@ -470,7 +487,7 @@ export default function App() {
     try {
       if (credentials?.mode === "signup") {
         if (!isSignInLoaded || !signIn) {
-          throw new Error("Authentication service is initializing. Please try again.");
+          throw new Error(clerkInitError || "Authentication service is still loading. Please try again in a moment.");
         }
         if (passwordToUse.length < 8) {
           throw new Error("Password must be at least 8 characters long.");
@@ -529,7 +546,7 @@ export default function App() {
       } else {
         // Sign in mode
         if (!isSignInLoaded || !signIn) {
-          throw new Error("Authentication service is initializing. Please try again.");
+          throw new Error(clerkInitError || "Authentication service is still loading. Please try again in a moment.");
         }
         clearUserSessionData();
         setGuestUser(null);
@@ -606,7 +623,7 @@ export default function App() {
         return { error: "Please enter a valid email address." };
       }
       if (!isSignInLoaded) {
-        return { error: "Authentication service is initializing. Please wait." };
+        return { error: clerkInitError || "Authentication service is still loading. Please try again in a moment." };
       }
       await signIn.create({
         strategy: "reset_password_email_code",
@@ -642,7 +659,7 @@ export default function App() {
       } else if (signUp) {
         await signUp.authenticateWithRedirect(redirectParams);
       } else {
-        throw new Error("Authentication service is initializing. Please wait.");
+        throw new Error(clerkInitError || "Authentication service is still loading. Please try again in a moment.");
       }
     } catch (error: any) {
       console.warn("[Clerk OAuth] Google sign in notice:", error);
@@ -781,7 +798,7 @@ export default function App() {
         onResendCode={handleResendCode}
         onGuestLogin={handleGuestLogin}
         isLoggingIn={isLoggingIn} 
-        authError={authError}
+        authError={authError || clerkInitError}
         mousePos={mousePos} 
       />
     );
