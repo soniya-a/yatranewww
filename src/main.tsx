@@ -196,16 +196,30 @@ const BUILD_CLERK_PUBLISHABLE_KEY =
   }
 })();
 
+function sanitizeClerkKey(raw: string): string {
+  if (!raw) return '';
+  let key = raw.trim();
+  if (key.includes('pk_test_') && key.lastIndexOf('pk_test_') > 0) {
+    key = key.substring(key.lastIndexOf('pk_test_'));
+  } else if (key.includes('pk_live_') && key.lastIndexOf('pk_live_') > 0) {
+    key = key.substring(key.lastIndexOf('pk_live_'));
+  }
+  if (key.includes('d2VsY29tZWQtZWVsLTY0NDguY2xlcmsuYWNjb3VudHMuZGV2J')) {
+    return 'pk_test_d2VsY29tZWQtZWVsLTY0NDguY2xlcmsuYWNjb3VudHMuZGV2JA';
+  }
+  return key;
+}
+
 async function resolveClerkPublishableKey(): Promise<string> {
   if (BUILD_CLERK_PUBLISHABLE_KEY) {
-    return BUILD_CLERK_PUBLISHABLE_KEY;
+    return sanitizeClerkKey(BUILD_CLERK_PUBLISHABLE_KEY);
   }
   try {
     const res = await fetch('/api/auth/config');
     if (res.ok) {
       const data = await res.json();
       if (typeof data?.clerkPublishableKey === 'string' && data.clerkPublishableKey.trim() !== '') {
-        return data.clerkPublishableKey.trim();
+        return sanitizeClerkKey(data.clerkPublishableKey);
       }
     }
   } catch (err) {

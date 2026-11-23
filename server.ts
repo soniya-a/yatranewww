@@ -1018,11 +1018,22 @@ async function startServer() {
   // Exposes ONLY the public Clerk publishable key (never CLERK_SECRET_KEY)
   // so production deployments work even if VITE_CLERK_PUBLISHABLE_KEY was set at runtime.
   app.get("/api/auth/config", (_req, res) => {
-    const publishableKey = (
+    let publishableKey = (
       process.env.VITE_CLERK_PUBLISHABLE_KEY ||
       process.env.CLERK_PUBLISHABLE_KEY ||
       ""
     ).trim();
+
+    // Auto-heal duplicated/mangled keys if pasted twice in dashboard (e.g. pk_test_...pk_test_...)
+    if (publishableKey.includes("pk_test_") && publishableKey.lastIndexOf("pk_test_") > 0) {
+      publishableKey = publishableKey.substring(publishableKey.lastIndexOf("pk_test_"));
+    } else if (publishableKey.includes("pk_live_") && publishableKey.lastIndexOf("pk_live_") > 0) {
+      publishableKey = publishableKey.substring(publishableKey.lastIndexOf("pk_live_"));
+    }
+    if (publishableKey.includes("d2VsY29tZWQtZWVsLTY0NDguY2xlcmsuYWNjb3VudHMuZGV2J")) {
+      publishableKey = "pk_test_d2VsY29tZWQtZWVsLTY0NDguY2xlcmsuYWNjb3VudHMuZGV2JA";
+    }
+
     res.json({
       clerkPublishableKey: publishableKey || null,
     });
