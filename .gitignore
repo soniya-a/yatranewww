@@ -7,3 +7,11 @@ coverage/
 .env*
 !.env.example
 test-results/
+
+# Environment secrets
+.env
+.env.*
+!.env.example
+node_modules/
+dist/
+
