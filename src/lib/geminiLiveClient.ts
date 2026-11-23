@@ -1,6 +1,8 @@
 // Gemini Multimodal Live API Client for Realtime Voice-to-Voice
 // Uses ephemeral tokens for secure browser authentication (zero permanent API key exposure).
 
+import { GEMINI_LIVE_AUDIO_MODEL } from './geminiConfig';
+
 export type GeminiLiveMessage = {
   type: 'text' | 'audio';
   content?: string;
@@ -44,11 +46,11 @@ export class GeminiLiveClient {
     if (typeof config === 'string') {
       this.token = config;
       this.endpoint = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained?access_token=${this.token}`;
-      this.model = "models/gemini-3.8-live";
+      this.model = GEMINI_LIVE_AUDIO_MODEL;
       this.voiceName = "Charon";
     } else {
       this.token = config.token;
-      this.model = config.model || "models/gemini-3.8-live";
+      this.model = config.model || GEMINI_LIVE_AUDIO_MODEL;
       this.endpoint = config.endpoint || `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained?access_token=${this.token}`;
       this.voiceName = config.voiceName || "Charon";
     }

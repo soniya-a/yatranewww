@@ -10,8 +10,8 @@
 //   7. Transparent round scorecards with no ungrounded scores
 // ==============================================================================
 
-import { GoogleGenAI } from '@google/genai';
-import { supabase, isSupabaseConfigured } from '../lib/supabaseServer';
+import { GEMINI_PRIMARY_MODEL } from '../lib/geminiConfig';
+import { supabase, isSupabaseConfigured, getUserSupabase } from '../lib/supabaseServer';
 import {
   getCanonicalQuestionSet,
   getInterviewSession,
@@ -31,15 +31,6 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 
-// Scoped Google GenAI instance
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY || 'dummy_key',
-  httpOptions: {
-    headers: {
-      'User-Agent': 'aistudio-build',
-    },
-  },
-});
 
 // Cache for persistent retrieval by report ID and session ID
 const reportsStore = new Map<string, InterviewAssessmentReport>();
@@ -96,19 +87,24 @@ function extractAnswerForQuestion(
     answerText = answers[String(q.slot_number - 1)];
   }
 
-  // 2. Code answers
+  // 2. Code answers (strip default placeholder text)
   if (codeAnswers) {
+    let rawCode = '';
     if (codeAnswers[q.question_id]) {
-      codeText = codeAnswers[q.question_id];
+      rawCode = codeAnswers[q.question_id];
     } else if (q.slot_number && codeAnswers[`Q${String(q.slot_number).padStart(3, '0')}`]) {
-      codeText = codeAnswers[`Q${String(q.slot_number).padStart(3, '0')}`];
+      rawCode = codeAnswers[`Q${String(q.slot_number).padStart(3, '0')}`];
+    }
+    const cleanedCode = (rawCode || '').replace(/\/\/\s*Write your code here\.*/gi, '').trim();
+    if (cleanedCode.length > 0) {
+      codeText = cleanedCode;
     }
   }
 
   // 3. Fallback to transcript search by question_id
   if (!answerText && chatHistory && Array.isArray(chatHistory)) {
     const matchingMsgs = chatHistory.filter(
-      m => m.role === 'user' && (m.question_id === q.question_id || m.text.includes(q.canonical_title || ''))
+      m => m.role === 'user' && (m.question_id === q.question_id || (q.canonical_title && m.text.includes(q.canonical_title)))
     );
     if (matchingMsgs.length > 0) {
       answerText = matchingMsgs.map(m => m.text).join('\n');
@@ -121,14 +117,85 @@ function extractAnswerForQuestion(
   };
 }
 
-// ── 2. HELPER: QUESTION UNANSWERED CHECK ──────────────────────────────────────
-function isAnswerEffectivelyEmpty(answerText: string, codeText: string): boolean {
-  const combined = (answerText + ' ' + codeText).trim();
-  if (combined.length === 0) return true;
-  if (combined.length < 4 && !/^[A-Da-d]$/.test(combined)) return true;
-  if (/^(skip|skipped|idk|no idea|pass|next|dont know|don't know|no answer)$/i.test(answerText.trim())) {
+// ── 2. HELPER: QUESTION UNANSWERED VS "I DON'T KNOW" CHECK ───────────────────
+function isAnswerUnanswered(answerText: string, codeText: string): boolean {
+  return (answerText + ' ' + codeText).trim().length === 0;
+}
+
+function isIDontKnowOrRefusal(answerText: string, codeText: string): boolean {
+  if (codeText.trim().length > 15) return false;
+  const norm = answerText.toLowerCase().replace(/[^a-z0-9\s']/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!norm) return false;
+  if (/^(skip|skipped|idk|no idea|pass|next|dont know|don't know|i dont know|i don't know|i do not know|not sure|i am not sure|i'm not sure|no answer|cannot answer|can't answer|na|n a|none)$/i.test(norm)) {
     return true;
   }
+  if (norm.length < 45 && /\b(i don't know|i dont know|i do not know|no idea|not sure about this|skip this question|pass this question)\b/i.test(norm)) {
+    return true;
+  }
+  return false;
+}
+
+// Semantic synonym expansion map for conceptual meaning matching across engineering branches
+const CONCEPT_SYNONYM_GROUPS: string[][] = [
+  ['bending moment', 'moment envelope', 'flexural', 'sagging', 'hogging', 'm = wl', 'wl2/8', 'limit state'],
+  ['shear force', 'stirrups', 'diagonal tension', 'shear reinforcement', 'transverse steel'],
+  ['is 456', 'eurocode', 'building code', 'safety factor', 'partial safety', 'serviceability', 'deflection'],
+  ['boundary condition', 'fixed support', 'pinned support', 'roller', 'diaphragm', 'staad', 'etabs', 'modal'],
+  ['gd&t', 'datum', 'tolerance', 'feature control', 'mmc', 'lmc', 'stack-up', 'fit'],
+  ['thermal', 'heat transfer', 'expansion', 'conductivity', 'convection', 'cyclic temperature'],
+  ['cavitation', 'npsh', 'vapor pressure', 'head loss', 'darcy', 'friction', 'impeller', 'hydraulic'],
+  ['fatigue', 's-n curve', 'goodman', 'soderberg', 'endurance limit', 'stress concentration', 'cyclic load'],
+  ['fea', 'finite element', 'mesh convergence', 'singularity', 'von mises', 'ansys', 'solidworks'],
+  ['isr', 'interrupt', 'priority inversion', 'rtos', 'mutex', 'semaphore', 'volatile', 'context switch'],
+  ['i2c', 'spi', 'pull-up', 'clock stretching', 'rise time', 'capacitance', 'mosi', 'miso', 'sck'],
+  ['setup time', 'hold time', 'metastability', 'clock domain', 'synchronizer', 'flip-flop', 'fifo', 'gray code'],
+  ['signal integrity', 'impedance', 'crosstalk', 'ground plane', 'decoupling', 'differential pair', 'emi'],
+  ['short circuit', 'fault', 'relay coordination', 'tcc', 'overcurrent', 'differential relay', 'circuit breaker'],
+  ['induction motor', 'vfd', 'v/f', 'slip', 'torque', 'pwm', 'inverter', 'synchronous'],
+  ['plc', 'scada', 'ladder logic', 'interlock', 'emergency stop', 'safety relay', 'modbus', 'watchdog'],
+  ['attention', 'transformer', 'query', 'key', 'value', 'softmax', 'd_k', 'self-attention'],
+  ['rag', 'retrieval', 'vector', 'embedding', 'rerank', 'hallucination', 'grounding', 'chunk'],
+  ['imbalanced', 'precision', 'recall', 'f1', 'roc', 'auc', 'focal loss', 'class weight', 'smote'],
+  ['overfitting', 'data leakage', 'regularization', 'dropout', 'cross-validation', 'drift', 'split'],
+  ['gradient', 'backpropagation', 'clipping', 'learning rate', 'batch normalization', 'layer norm', 'vanishing'],
+  ['connection pool', 'thread starvation', 'lock', 'timeout', 'latency', 'bottleneck', 'profiling', 'trace'],
+  ['zero-downtime', 'migration', 'expand-contract', 'dual write', 'backfill', 'backward compatible'],
+  ['idempotent', 'idempotency key', 'distributed lock', 'dead-letter', 'retry', 'at-least-once', 'queue'],
+  ['rate limit', 'token bucket', 'sliding window', 'leaky bucket', 'redis', 'atomic', 'lua'],
+  ['index', 'b-tree', 'lsm', 'composite index', 'leftmost prefix', 'cardinality', 'explain'],
+  ['ownership', 'configured', 'implemented', 'designed', 'built', 'architected', 'modeled', 'developed', 'project'],
+  ['trade-off', 'because', 'instead of', 'versus', 'blocked', 'prevent', 'reduced', 'improved', 'optimized', '%'],
+  ['debugging', 'bottleneck', 'latency', 'contention', 'constraint', 'issue', 'resolved', 'dma', 'mutex', 'interrupt']
+];
+
+function matchesConceptMeaning(candidateNorm: string, conceptPhrase: string): boolean {
+  const cleanPhrase = conceptPhrase.toLowerCase().replace(/[^a-z0-9\s\/\-&]/g, ' ').trim();
+  const tokens = cleanPhrase.split(/\s+/).filter(w => w.length > 3 && !/^(with|from|that|this|have|what|when|where|which|their|about|using|under|into|over)$/.test(w));
+  if (tokens.length === 0) return false;
+
+  // 1. Direct token coverage or stem match (at least 4 chars prefix)
+  let tokenHits = 0;
+  for (const tok of tokens) {
+    const stem = tok.length >= 6 ? tok.slice(0, 5) : tok;
+    if (candidateNorm.includes(stem)) {
+      tokenHits++;
+    }
+  }
+  if (tokenHits >= Math.max(1, Math.min(2, tokens.length))) {
+    return true;
+  }
+
+  // 2. Semantic synonym cluster match
+  for (const group of CONCEPT_SYNONYM_GROUPS) {
+    const conceptInGroup = group.some(term => cleanPhrase.includes(term));
+    if (conceptInGroup) {
+      const candidateHitsGroup = group.filter(term => candidateNorm.includes(term)).length;
+      if (candidateHitsGroup >= 1) {
+        return true;
+      }
+    }
+  }
+
   return false;
 }
 
@@ -199,85 +266,86 @@ function evaluateCodingQuestion(
   answerText: string,
   codeText: string
 ): { score: number; verdict: QuestionEvaluation['verdict']; strengths: string[]; missing_concepts: string[]; feedback: string; rubric_breakdown: RubricCriterionScore[] } {
-  const combined = (answerText + '\n' + codeText).toLowerCase();
+  const combined = (answerText + '\n' + codeText).toLowerCase().trim();
   const strengths: string[] = [];
   const missing_concepts: string[] = [];
   const rubric_breakdown: RubricCriterionScore[] = [];
 
-  // Parse scoring rubric if available
-  const rawRubric = Array.isArray(q.scoring_rubric) ? q.scoring_rubric : [];
-  
-  // Criteria 1: Approach & Correctness
-  const hasAlgorithm = /\b(greedy|sort|binary\s*search|stack|queue|hash|two\s*pointer|dp|dynamic|bfs|dfs)\b/.test(combined);
+  // Detect deliberately broken, trivial, or wrong code submissions (e.g., return -1, return 0, syntax error, stub)
+  const cleanCode = codeText.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '').trim();
+  const isTrivialStub =
+    cleanCode.length > 0 &&
+    (cleanCode.length < 35 ||
+      /\breturn\s+(-1|0|null|false|true|"")\s*;?\s*\}?$/i.test(cleanCode) ||
+      /\b(todo|fixme|wrong|broken|syntax_error)\b/i.test(cleanCode));
+
+  // Criteria 1: Approach & Algorithmic Meaning
+  const hasAlgorithm =
+    !isTrivialStub &&
+    (/\b(greedy|sort|binary\s*search|stack|queue|deque|hash|map|set|two\s*pointer|sliding\s*window|dp|dynamic|bfs|dfs|prefix|tree|graph|heap|priority|lock|mutex|for\s*\(|while\s*\()\b/.test(combined) ||
+      matchesConceptMeaning(combined, q.what_we_look_for || ''));
   if (hasAlgorithm) {
-    strengths.push('Identified suitable algorithmic pattern');
+    strengths.push('Implemented or articulated a valid algorithmic approach');
   } else {
-    missing_concepts.push('Clear algorithmic approach (e.g. greedy, two-pointer, or topological sort)');
+    missing_concepts.push(q.what_we_look_for ? q.what_we_look_for.slice(0, 110) : 'Working algorithmic implementation and data structure selection');
   }
 
   // Criteria 2: Complexity Analysis
-  const mentionsComplexity = /\bo\([nlogk1\s\^\*]+\)/i.test(combined) || combined.includes('time complexity') || combined.includes('space complexity');
+  const mentionsComplexity = /\bo\([nlogk1mv\+e\s\^\*]+\)/i.test(combined) || combined.includes('time complexity') || combined.includes('space complexity') || combined.includes('linear time') || combined.includes('logarithmic');
   if (mentionsComplexity) {
     strengths.push('Analyzed runtime or space complexity');
   } else {
-    missing_concepts.push(`Explicit complexity target (${q.expected_complexity?.time || 'O(N)'})`);
+    missing_concepts.push(`Explicit time/space complexity analysis (${q.expected_complexity?.time || 'O(N)'})`);
   }
 
   // Criteria 3: Edge Cases and Constraints
-  const handlesConstraints = /\b(empty|null|overflow|boundary|zero|negative|modulo|long|bigint)\b/.test(combined);
+  const handlesConstraints =
+    !isTrivialStub &&
+    (/\b(empty|null|overflow|boundary|zero|negative|modulo|long|bigint|edge\s*case|length\s*===\s*0|!\w+\.length)\b/.test(combined));
   if (handlesConstraints) {
-    strengths.push('Addressed edge cases and constraints');
+    strengths.push('Addressed edge cases and boundary constraints');
   } else {
-    missing_concepts.push('Boundary and constraint guards (e.g. 64-bit integer overflow, empty input)');
+    missing_concepts.push('Boundary and constraint guards (empty input, overflow, corner cases)');
   }
 
-  // Calculate rubric scores
-  let totalScore = 0;
-  if (rawRubric.length > 0) {
-    let weightSum = 0;
-    for (const r of rawRubric) {
-      const weight = r.weight || 33;
-      weightSum += weight;
-      let critScore = 20; // baseline for answering
-      const cNorm = (r.criterion || '').toLowerCase();
-      if (cNorm.includes('correct') || cNorm.includes('greedy') || cNorm.includes('parsing') || cNorm.includes('logic')) {
-        critScore = hasAlgorithm ? 85 : 30;
-      } else if (cNorm.includes('complex') || cNorm.includes('time') || cNorm.includes('optim')) {
-        critScore = mentionsComplexity ? 90 : 35;
-      } else if (cNorm.includes('overflow') || cNorm.includes('memory') || cNorm.includes('stack') || cNorm.includes('bound')) {
-        critScore = handlesConstraints ? 85 : 30;
-      } else {
-        critScore = hasAlgorithm && handlesConstraints ? 80 : 40;
-      }
-      rubric_breakdown.push({
-        criterion: r.criterion,
-        weight,
-        score: critScore,
-        comment: critScore >= 75 ? 'Criterion satisfied' : 'Needs further optimization or boundary checks'
-      });
-      totalScore += critScore * weight;
-    }
-    totalScore = Math.round(totalScore / (weightSum || 1));
-  } else {
-    // Default 3-dimension rubric
-    const s1 = hasAlgorithm ? 85 : 30;
-    const s2 = mentionsComplexity ? 85 : 30;
-    const s3 = handlesConstraints ? 80 : 35;
-    totalScore = Math.round((s1 * 0.45) + (s2 * 0.3) + (s3 * 0.25));
+  if (isTrivialStub && !hasAlgorithm) {
     rubric_breakdown.push(
-      { criterion: 'Algorithmic Correctness', weight: 45, score: s1, comment: hasAlgorithm ? 'Correct algorithm' : 'Sub-optimal approach' },
-      { criterion: 'Time & Space Complexity', weight: 30, score: s2, comment: mentionsComplexity ? 'Complexity evaluated' : 'Missing complexity evaluation' },
-      { criterion: 'Edge Cases & Constraints', weight: 25, score: s3, comment: handlesConstraints ? 'Constraints addressed' : 'Missing boundary checks' }
+      { criterion: 'Algorithmic Correctness (Static AST/Logic Check)', weight: 45, score: 10, comment: 'Submitted code is an incomplete stub or returns hardcoded incorrect output' },
+      { criterion: 'Time & Space Complexity', weight: 30, score: mentionsComplexity ? 60 : 0, comment: mentionsComplexity ? 'Complexity noted' : 'Missing complexity analysis' },
+      { criterion: 'Edge Cases & Constraints', weight: 25, score: 0, comment: 'Edge cases and problem constraints not handled' }
     );
+    const stubScore = mentionsComplexity ? 22 : 5;
+    return {
+      score: stubScore,
+      verdict: 'Weak',
+      strengths,
+      missing_concepts,
+      feedback: `Coding submission scored ${stubScore}/100 (Static Rubric Evaluation — no live execution sandbox). The submitted code is incomplete or returns a trivial/incorrect value without implementing the required algorithm.`,
+      rubric_breakdown
+    };
   }
 
-  // Cap score if answer is superficial
-  if (combined.length < 80 && totalScore > 50) totalScore = 50;
+  const s1 = hasAlgorithm ? 88 : 15;
+  const s2 = mentionsComplexity ? 88 : (hasAlgorithm ? 45 : 10);
+  const s3 = handlesConstraints ? 85 : (hasAlgorithm ? 45 : 10);
+  let totalScore = Math.round((s1 * 0.45) + (s2 * 0.3) + (s3 * 0.25));
+
+  if (!hasAlgorithm && !mentionsComplexity && !handlesConstraints) {
+    totalScore = 10;
+  } else if (combined.length < 40 && totalScore > 40) {
+    totalScore = 40;
+  }
+
+  rubric_breakdown.push(
+    { criterion: 'Algorithmic Correctness', weight: 45, score: s1, comment: hasAlgorithm ? 'Valid algorithmic logic identified' : 'Missing core algorithm implementation' },
+    { criterion: 'Time & Space Complexity', weight: 30, score: s2, comment: mentionsComplexity ? 'Complexity target addressed' : 'Missing explicit Big-O complexity' },
+    { criterion: 'Edge Cases & Constraints', weight: 25, score: s3, comment: handlesConstraints ? 'Edge cases handled' : 'Missing boundary checks' }
+  );
 
   let verdict: QuestionEvaluation['verdict'] = 'Average';
   if (totalScore >= 80) verdict = 'Excellent';
   else if (totalScore >= 65) verdict = 'Good';
-  else if (totalScore >= 45) verdict = 'Average';
+  else if (totalScore >= 40) verdict = 'Average';
   else verdict = 'Weak';
 
   return {
@@ -285,14 +353,14 @@ function evaluateCodingQuestion(
     verdict,
     strengths,
     missing_concepts,
-    feedback: `Coding solution achieved ${totalScore}/100. ${strengths.join(', ')}. Need improvement on: ${missing_concepts.join(', ') || 'further speed benchmark testing'}.`,
+    feedback: `Coding solution achieved ${totalScore}/100 (Static Algorithmic & Complexity Rubric). ${strengths.length > 0 ? 'Strengths: ' + strengths.join(', ') + '. ' : ''}${missing_concepts.length > 0 ? 'Missed: ' + missing_concepts.join('; ') + '.' : ''}`,
     rubric_breakdown
   };
 }
 
 /**
  * Evaluates Technical DSA, Domain-Specific Technical, LLD, and Project Deep Dive questions.
- * Compares against expected_points, rubrics, and conceptual keywords.
+ * Evaluates conceptual meaning across expected_points and what_we_look_for using synonym expansion and reasoning depth.
  */
 function evaluateTechnicalDomainQuestion(
   q: CanonicalInterviewQuestion,
@@ -303,82 +371,76 @@ function evaluateTechnicalDomainQuestion(
   const missing_concepts: string[] = [];
   const rubric_breakdown: RubricCriterionScore[] = [];
 
-  // Match against expected_points if available
-  const points = Array.isArray(q.expected_points) ? q.expected_points : [];
+  // Build expected concept list from expected_points AND what_we_look_for
+  const rawConceptList: string[] = [];
+  if (Array.isArray(q.expected_points) && q.expected_points.length > 0) {
+    rawConceptList.push(...q.expected_points);
+  }
+  if (q.what_we_look_for) {
+    const splitLookFor = q.what_we_look_for
+      .split(/[\,\;\.]/)
+      .map(s => s.trim())
+      .filter(s => s.length > 4);
+    for (const item of splitLookFor) {
+      if (!rawConceptList.some(existing => existing.toLowerCase().includes(item.toLowerCase().slice(0, 15)))) {
+        rawConceptList.push(item);
+      }
+    }
+  }
+
   let pointsMatched = 0;
-
-  if (points.length > 0) {
-    for (const pt of points) {
-      const ptWords = pt.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(w => w.length > 4);
-      const matched = ptWords.filter(w => norm.includes(w));
-      if (matched.length >= Math.min(2, ptWords.length)) {
-        pointsMatched++;
-        strengths.push(pt.slice(0, 80));
-      } else {
-        missing_concepts.push(pt.slice(0, 80));
-      }
-    }
-  } else if (q.what_we_look_for) {
-    // Check keywords in what_we_look_for
-    const criteriaWords = q.what_we_look_for.toLowerCase().split(/[\,\.\;\:]/).map(s => s.trim()).filter(s => s.length > 5);
-    for (const crit of criteriaWords) {
-      const words = crit.split(/\s+/).filter(w => w.length > 4);
-      if (words.some(w => norm.includes(w))) {
-        pointsMatched++;
-        strengths.push(crit.slice(0, 80));
-      } else {
-        missing_concepts.push(crit.slice(0, 80));
-      }
+  for (const concept of rawConceptList) {
+    if (matchesConceptMeaning(norm, concept)) {
+      pointsMatched++;
+      strengths.push(concept.slice(0, 95));
+    } else {
+      missing_concepts.push(concept.slice(0, 95));
     }
   }
 
-  // Calculate score based on points coverage and answer depth
-  const totalPoints = (points.length > 0 ? points.length : 3);
-  const ratio = Math.min(1, pointsMatched / Math.max(1, totalPoints));
-  
-  // Depth multiplier (prevents single-sentence superficial answers from getting high score)
+  // Also check question-stem domain keywords and causal technical reasoning markers
+  const qWords = (q.question_text || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length > 5 && !/^(explain|describe|discuss|walk|through|company|approach|design|evaluate|perform|between|during|manage)$/.test(w));
+  const stemHits = qWords.filter(w => norm.includes(w.slice(0, 5))).length;
+  const hasTechnicalReasoning = /\b(because|therefore|due to|results in|prevents|ensures|trade-off|by using|calculated|formula|equation|protocol|standard|safety|efficiency|latency|throughput)\b/i.test(norm);
+
+  const totalConcepts = Math.max(1, rawConceptList.length || 3);
+  const conceptRatio = Math.min(1, pointsMatched / totalConcepts);
+
   const wordCount = answerText.split(/\s+/).filter(Boolean).length;
-  let depthFactor = 1.0;
-  if (wordCount < 25) depthFactor = 0.45;
-  else if (wordCount < 50) depthFactor = 0.75;
-  else if (wordCount >= 80) depthFactor = 1.0;
 
-  let rawScore = Math.round((ratio * 80 + 20) * depthFactor);
-  rawScore = Math.max(20, Math.min(100, rawScore));
-
-  // Build rubric breakdown
-  if (Array.isArray(q.scoring_rubric) && q.scoring_rubric.length > 0) {
-    for (const r of q.scoring_rubric) {
-      const critWords = (r.criterion || '').toLowerCase().split(/\s+/).filter(w => w.length > 4);
-      const isCritMentioned = critWords.some(w => norm.includes(w));
-      const critScore = isCritMentioned ? Math.min(100, Math.round(rawScore * 1.05)) : Math.round(rawScore * 0.95);
-      rubric_breakdown.push({
-        criterion: r.criterion,
-        weight: r.weight,
-        score: Math.min(100, Math.max(20, critScore)),
-        comment: critScore >= 75 ? 'Addressed thoroughly' : 'Partial depth or missing details'
-      });
-    }
+  let rawScore = 0;
+  if (pointsMatched === 0 && stemHits === 0) {
+    // Completely incorrect or irrelevant response
+    rawScore = wordCount > 15 && hasTechnicalReasoning ? 18 : 8;
+  } else if (pointsMatched === 0 && stemHits > 0) {
+    // Mentions topic words from the prompt but misses expected reference concepts
+    rawScore = hasTechnicalReasoning && wordCount >= 20 ? 38 : 22;
   } else {
-    rubric_breakdown.push(
-      { criterion: 'Technical Depth & Core Concepts', weight: 40, score: rawScore, comment: rawScore >= 70 ? 'Key concepts covered' : 'Needs greater depth' },
-      { criterion: 'Problem Decomposition & Architecture', weight: 35, score: Math.min(100, Math.round(rawScore * 0.95 + 5)), comment: rawScore >= 65 ? 'Structured explanation' : 'Lacks architectural clarity' },
-      { criterion: 'Trade-offs & Constraints', weight: 25, score: Math.min(100, Math.round(rawScore * 0.9)), comment: rawScore >= 70 ? 'Trade-offs addressed' : 'Missing scaling / edge cases' }
-    );
+    // Matched at least 1 expected concept semantically
+    let base = Math.round(35 + conceptRatio * 55 + (hasTechnicalReasoning ? 10 : 0));
+    if (wordCount < 10) base = Math.min(base, 48);
+    else if (wordCount < 20) base = Math.min(base, 72);
+    rawScore = Math.max(35, Math.min(100, base));
   }
+
+  rubric_breakdown.push(
+    { criterion: 'Conceptual Accuracy & Meaning', weight: 45, score: rawScore, comment: pointsMatched > 0 ? `Covered ${pointsMatched}/${totalConcepts} expected concepts` : 'Core reference concepts missed' },
+    { criterion: 'Engineering Reasoning & Depth', weight: 35, score: hasTechnicalReasoning ? Math.min(100, rawScore + 8) : Math.max(10, rawScore - 10), comment: hasTechnicalReasoning ? 'Clear cause-and-effect engineering explanation' : 'Needs deeper analytical justification' },
+    { criterion: 'Practical Application & Trade-offs', weight: 20, score: rawScore, comment: rawScore >= 70 ? 'Strong practical grounding' : 'Could elaborate further on constraints' }
+  );
 
   let verdict: QuestionEvaluation['verdict'] = 'Average';
   if (rawScore >= 80) verdict = 'Excellent';
-  else if (rawScore >= 65) verdict = 'Good';
-  else if (rawScore >= 45) verdict = 'Average';
+  else if (rawScore >= 68) verdict = 'Good';
+  else if (rawScore >= 38) verdict = 'Average';
   else verdict = 'Weak';
 
   return {
     score: rawScore,
     verdict,
-    strengths: strengths.slice(0, 3),
-    missing_concepts: missing_concepts.slice(0, 3),
-    feedback: `Technical answer evaluated at ${rawScore}/100. Covered ${pointsMatched}/${totalPoints} key expected concepts.`,
+    strengths: strengths.slice(0, 4),
+    missing_concepts: missing_concepts.slice(0, 4),
+    feedback: `Evaluated at ${rawScore}/100 based on conceptual meaning (${pointsMatched}/${totalConcepts} reference concepts matched). ${missing_concepts.length > 0 ? 'Key concepts missed: ' + missing_concepts.slice(0, 2).join('; ') + '.' : 'All core technical concepts addressed.'}`,
     rubric_breakdown
   };
 }
@@ -532,40 +594,77 @@ function evaluateSingleQuestion(
   q: CanonicalInterviewQuestion,
   answerText: string,
   codeText: string,
-  parsedResume?: any
+  parsedResume?: any,
+  codeExecResult?: { status: 'passed' | 'error' | 'not_run'; language: string; output: string; error?: string }
 ): QuestionEvaluation {
-  const isUnanswered = isAnswerEffectivelyEmpty(answerText, codeText);
+  const isUnanswered = isAnswerUnanswered(answerText, codeText);
+  const isIDK = !isUnanswered && isIDontKnowOrRefusal(answerText, codeText);
   const roundType = normalizeRoundCategory(q.round);
+  const expectedSummary = q.explanation || q.what_we_look_for || (Array.isArray(q.expected_points) ? q.expected_points.join('; ') : 'Core domain concepts and trade-off analysis');
 
-  if (isUnanswered) {
+  const buildDefaultMissing = (): string[] => {
     const missing: string[] = [];
-    if (q.expected_points && Array.isArray(q.expected_points)) {
-      missing.push(...q.expected_points.slice(0, 2));
+    if (q.expected_points && Array.isArray(q.expected_points) && q.expected_points.length > 0) {
+      missing.push(...q.expected_points.slice(0, 3));
     } else if (q.what_we_look_for) {
-      missing.push(q.what_we_look_for.slice(0, 100));
+      missing.push(...q.what_we_look_for.split(/[\,\;\.]/).map(s => s.trim()).filter(s => s.length > 4).slice(0, 3));
     } else if (q.correct_answer) {
       missing.push(`Correct Option: ${q.correct_answer}`);
     } else {
-      missing.push('Comprehensive technical solution');
+      missing.push('Core domain technical explanation and engineering justification');
     }
+    return missing;
+  };
 
+  if (isUnanswered) {
     return {
       question_id: q.question_id,
       canonical_title: q.canonical_title || q.question_text.slice(0, 60),
+      question_text: q.question_text,
       round: q.round,
       category: q.category,
       candidate_answer: '',
+      submitted_code: undefined,
       is_answered: false,
+      answer_status: 'unanswered',
       score: 0,
       max_score: 100,
+      marks_awarded: 0,
+      marks_deducted: 100,
       verdict: 'Unanswered',
       rubric_breakdown: Array.isArray(q.scoring_rubric)
         ? q.scoring_rubric.map(r => ({ criterion: r.criterion, weight: r.weight, score: 0, comment: 'Question unanswered' }))
         : [],
       strengths: [],
-      missing_concepts: missing,
-      feedback: 'Question was left unanswered. Candidate skipped this problem.',
-      expected_answer_summary: q.explanation || q.what_we_look_for || (q.expected_points ? q.expected_points.join('; ') : '')
+      missing_concepts: buildDefaultMissing(),
+      feedback: 'Question was left unanswered (0/100 marks awarded, 100 marks deducted).',
+      expected_answer_summary: expectedSummary
+    };
+  }
+
+  if (isIDK) {
+    return {
+      question_id: q.question_id,
+      canonical_title: q.canonical_title || q.question_text.slice(0, 60),
+      question_text: q.question_text,
+      round: q.round,
+      category: q.category,
+      candidate_answer: answerText,
+      submitted_code: codeText || undefined,
+      is_answered: true,
+      answer_status: 'incorrect',
+      score: 0,
+      max_score: 100,
+      marks_awarded: 0,
+      marks_deducted: 100,
+      verdict: 'Weak',
+      rubric_breakdown: Array.isArray(q.scoring_rubric)
+        ? q.scoring_rubric.map(r => ({ criterion: r.criterion, weight: r.weight, score: 0, comment: 'Candidate indicated they did not know the answer' }))
+        : [{ criterion: 'Conceptual Understanding', weight: 100, score: 0, comment: 'Candidate stated they did not know or skipped the question' }],
+      strengths: [],
+      missing_concepts: buildDefaultMissing(),
+      feedback: `Candidate responded "${answerText}" (0/100 marks awarded, 100 marks deducted). Review the expected concepts and reference solution.`,
+      expected_answer_summary: expectedSummary
     };
   }
 
@@ -578,6 +677,13 @@ function evaluateSingleQuestion(
     rubric_breakdown?: RubricCriterionScore[];
   };
 
+  const isCodingEval =
+    q.requires_coding === true ||
+    Boolean(codeText) ||
+    (q.requires_coding !== false &&
+      (roundType === 'Coding / Online Assessment' ||
+        (roundType === 'Technical DSA' && (q.expected_complexity || (Array.isArray(q.scoring_rubric) && q.scoring_rubric.length > 0)))));
+
   switch (roundType) {
     case 'Aptitude & Logical Reasoning':
       evalResult = evaluateAptitudeQuestion(q, answerText);
@@ -586,7 +692,7 @@ function evaluateSingleQuestion(
       evalResult = evaluateCodingQuestion(q, answerText, codeText);
       break;
     case 'Technical DSA':
-      if (codeText || q.expected_complexity || (Array.isArray(q.scoring_rubric) && q.scoring_rubric.length > 0)) {
+      if (isCodingEval) {
         evalResult = evaluateCodingQuestion(q, answerText, codeText);
       } else {
         evalResult = evaluateTechnicalDomainQuestion(q, answerText + (codeText ? '\n' + codeText : ''));
@@ -602,25 +708,55 @@ function evaluateSingleQuestion(
     case 'Project & Resume Deep Dive':
     case 'System Design / Low-Level Design':
     default:
-      evalResult = evaluateTechnicalDomainQuestion(q, answerText + (codeText ? '\n' + codeText : ''));
+      if (codeText && !answerText) {
+        evalResult = evaluateCodingQuestion(q, answerText, codeText);
+      } else {
+        evalResult = evaluateTechnicalDomainQuestion(q, answerText + (codeText ? '\n' + codeText : ''));
+      }
       break;
+  }
+
+  let finalScore = Math.max(0, Math.min(100, Math.round(evalResult.score)));
+  if (codeExecResult?.status === 'error' && finalScore > 35) {
+    finalScore = 35;
+  }
+  let answerStatus: QuestionEvaluation['answer_status'] = 'incorrect';
+  if (finalScore >= 70) {
+    answerStatus = 'correct';
+  } else if (finalScore >= 35) {
+    answerStatus = 'partially_correct';
+  } else {
+    answerStatus = 'incorrect';
   }
 
   return {
     question_id: q.question_id,
     canonical_title: q.canonical_title || q.question_text.slice(0, 60),
+    question_text: q.question_text,
     round: q.round,
     category: q.category,
-    candidate_answer: answerText || codeText,
+    candidate_answer: answerText || (codeText ? '[Code Submitted]' : ''),
+    submitted_code: codeText || undefined,
+    code_execution_result: codeExecResult,
     is_answered: true,
-    score: evalResult.score,
+    answer_status: answerStatus,
+    score: finalScore,
     max_score: 100,
+    marks_awarded: finalScore,
+    marks_deducted: 100 - finalScore,
     verdict: evalResult.verdict,
     rubric_breakdown: evalResult.rubric_breakdown || [],
     strengths: evalResult.strengths,
-    missing_concepts: evalResult.missing_concepts,
-    feedback: evalResult.feedback,
-    expected_answer_summary: q.explanation || q.what_we_look_for || (q.expected_points ? q.expected_points.join('; ') : '')
+    missing_concepts: evalResult.missing_concepts.length > 0 ? evalResult.missing_concepts : (finalScore < 70 ? buildDefaultMissing() : []),
+    feedback: codeExecResult?.error
+      ? `${evalResult.feedback} Execution/Syntax Error: ${codeExecResult.error}`
+      : evalResult.feedback,
+    expected_answer_summary: expectedSummary,
+    code_evaluation_note: codeText
+      ? codeExecResult
+        ? `Code verification (${codeExecResult.language.toUpperCase()}): ${codeExecResult.status.toUpperCase()} — ${codeExecResult.output || codeExecResult.error || ''}`
+        : 'Evaluated via static algorithmic, syntax, and complexity rubric analysis.'
+      : undefined
   };
 }
 
@@ -644,7 +780,8 @@ export async function evaluateInterview(
     codeAnswers = {},
     chatHistory = [],
     parsedResume,
-    interviewMode = 'normal'
+    interviewMode = 'normal',
+    authToken
   } = input;
 
   // Retrieve canonical question set
@@ -654,10 +791,12 @@ export async function evaluateInterview(
   }
 
   // 1. Evaluate every question in the set
+  const codeExecutionResults = input.codeExecutionResults || {};
   const questionEvaluations: QuestionEvaluation[] = [];
   for (const q of questionSet.questions) {
     const { answerText, codeText } = extractAnswerForQuestion(q, answers, codeAnswers, chatHistory);
-    const qEval = evaluateSingleQuestion(q, answerText, codeText, parsedResume);
+    const execRes = codeExecutionResults[q.question_id];
+    const qEval = evaluateSingleQuestion(q, answerText, codeText, parsedResume, execRes);
     questionEvaluations.push(qEval);
   }
 
@@ -741,10 +880,29 @@ export async function evaluateInterview(
     };
   }
 
-  // 3. Overall Performance Calculation
-  const roundScoresList = Object.values(roundScorecards).map(r => r.score);
+  // 3. Overall Performance & Summary Metrics Calculation
+  const totalQuestionsAsked = questionEvaluations.length;
+  const correctCount = questionEvaluations.filter(q => q.answer_status === 'correct').length;
+  const partiallyCorrectCount = questionEvaluations.filter(q => q.answer_status === 'partially_correct').length;
+  const incorrectCount = questionEvaluations.filter(q => q.answer_status === 'incorrect').length;
+  const unansweredCount = questionEvaluations.filter(q => q.answer_status === 'unanswered' || !q.is_answered).length;
+  const totalMarksAwarded = questionEvaluations.reduce((acc, q) => acc + (q.marks_awarded ?? q.score), 0);
+  const totalMaxMarks = totalQuestionsAsked * 100;
+  const totalMarksDeducted = totalMaxMarks - totalMarksAwarded;
+
+  const summaryMetrics = {
+    total_questions_asked: totalQuestionsAsked,
+    correct_count: correctCount,
+    partially_correct_count: partiallyCorrectCount,
+    incorrect_count: incorrectCount,
+    unanswered_count: unansweredCount,
+    total_marks_awarded: totalMarksAwarded,
+    total_marks_deducted: totalMarksDeducted,
+    total_max_marks: totalMaxMarks
+  };
+
   const overallScore = Math.round(
-    roundScoresList.reduce((acc, s) => acc + s, 0) / Math.max(1, roundScoresList.length)
+    totalMarksAwarded / Math.max(1, totalQuestionsAsked)
   );
 
   let overallGrade: InterviewAssessmentReport['overall_grade'] = 'B';
@@ -818,6 +976,63 @@ export async function evaluateInterview(
 
   const reportId = input.reportId || `RPT_${company.replace(/[^a-zA-Z0-9]/g, '').slice(0, 4).toUpperCase()}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
 
+  // 7. Build Factual Camera, Screen-Share & Proctoring Telemetry Report
+  const rawLogs = Array.isArray(input.behaviorLogs) ? input.behaviorLogs : [];
+  const telemetry = input.proctoringTelemetry || {};
+  const facePresentChecks = rawLogs.filter(l => l.marker === 'FACE_PRESENT').length;
+  const faceMissingEvents = rawLogs.filter(l => l.marker === 'FACE_MISSING');
+  const faceMissingDurationMs = faceMissingEvents.reduce((acc, l) => acc + (l.durationMs || 2000), 0) + (telemetry.faceMissingDurationMs || 0);
+  const multipleFacesCount = rawLogs.filter(l => l.marker === 'MULTIPLE_FACES').length;
+  const headMovementCount = rawLogs.filter(l => l.marker === 'HEAD_LEFT' || l.marker === 'HEAD_RIGHT').length;
+  const cameraDisconnectCount = rawLogs.filter(l => l.marker === 'CAMERA_DISCONNECTED').length + (telemetry.cameraDisconnectCount || 0);
+  const screenShareInterruptions = rawLogs.filter(l => l.marker === 'SCREEN_SHARE_STOPPED' || l.marker === 'SCREEN_SHARE_INTERRUPTED').length + (telemetry.screenShareInterruptions || 0);
+  const tabSwitchCount = rawLogs.filter(l => l.marker === 'TAB_HIDDEN').length + (telemetry.tabSwitchCount || 0);
+  const tabHiddenDurationMs = rawLogs.filter(l => l.marker === 'TAB_VISIBLE' && l.durationMs).reduce((acc, l) => acc + (l.durationMs || 0), 0) + (telemetry.tabHiddenDurationMs || 0);
+  const totalInterruptions = cameraDisconnectCount + screenShareInterruptions + tabSwitchCount + faceMissingEvents.length;
+
+  const eventTimeline = rawLogs.slice(-30).map(l => ({
+    timestamp: l.timestamp,
+    iso_time: new Date(l.timestamp).toISOString(),
+    event_type: l.marker,
+    duration_ms: l.durationMs,
+    details: l.details || `Observed ${l.marker}`
+  }));
+
+  const integrityStatus: 'Clean Session' | 'Minor Interruptions Observed' | 'Review Recommended' =
+    multipleFacesCount > 0 || tabSwitchCount > 2 || screenShareInterruptions > 1
+      ? 'Review Recommended'
+      : totalInterruptions > 0
+      ? 'Minor Interruptions Observed'
+      : 'Clean Session';
+
+  const proctoringReport = {
+    observed_events: {
+      camera_permission: telemetry.cameraPermission || (facePresentChecks > 0 ? 'granted' : 'not_enabled'),
+      screen_share_permission: telemetry.screenSharePermission || 'not_requested',
+      screen_share_active: Boolean(telemetry.screenShareActive),
+      face_present_checks: facePresentChecks,
+      face_missing_count: faceMissingEvents.length,
+      face_missing_duration_ms: faceMissingDurationMs,
+      multiple_faces_count: multipleFacesCount,
+      head_movement_count: headMovementCount,
+      camera_disconnect_count: cameraDisconnectCount,
+      screen_share_interruptions: screenShareInterruptions,
+      tab_switch_count: tabSwitchCount,
+      tab_hidden_duration_ms: tabHiddenDurationMs,
+      total_interruptions: totalInterruptions,
+      event_timeline: eventTimeline
+    },
+    interpretation: {
+      integrity_status: integrityStatus,
+      head_movement_note: 'Head and gaze movements are recorded strictly as ergonomic observation telemetry and are NOT treated as evidence of cheating.',
+      phone_detection_note: 'No object or mobile phone detection model is active; monitoring uses MediaPipe FaceLandmarker and browser visibility/media-track telemetry only.',
+      summary:
+        integrityStatus === 'Clean Session'
+          ? 'No suspicious interruptions, multiple faces, or tab-switching events were observed during this session.'
+          : `Observed ${tabSwitchCount} tab switch(es), ${faceMissingEvents.length} face-missing interval(s), ${multipleFacesCount} multi-face frame(s), and ${screenShareInterruptions} screen-share interruption(s).`
+    }
+  };
+
   const finalReport: InterviewAssessmentReport = {
     id: reportId,
     session_id: sessionId,
@@ -830,12 +1045,19 @@ export async function evaluateInterview(
     overall_grade: overallGrade,
     hiring_decision: hiringDecision,
     hiring_summary: hiringSummary,
+    summary_metrics: summaryMetrics,
     round_scorecards: roundScorecards,
     question_evaluations: questionEvaluations,
     strongest_skills: strongestSkills,
     weakest_skills: weakestSkills,
     critical_skill_gaps: criticalSkillGaps,
     recommended_roadmap: recommendedRoadmap,
+    proctoring_report: proctoringReport,
+    coding_execution_capabilities: {
+      sandbox_available: false,
+      evaluation_mode: 'static_ast_and_complexity_rubric',
+      note: 'No live code execution sandbox is active. Submitted code is evaluated via static algorithmic structure, syntax check, and complexity rubric analysis rather than live compilation/test-case execution.'
+    },
     interview_mode: interviewMode,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString()
@@ -847,7 +1069,8 @@ export async function evaluateInterview(
   // Persist to Supabase if configured
   if (isSupabaseConfigured) {
     try {
-      await supabase.from('interview_assessment_reports').upsert({
+      const client = getUserSupabase(authToken);
+      await client.from('interview_assessment_reports').upsert({
         id: finalReport.id,
         session_id: finalReport.session_id,
         question_set_id: finalReport.question_set_id,
@@ -872,7 +1095,7 @@ export async function evaluateInterview(
       });
 
       // Backward-compatible summary record into legacy 'interviews' table
-      await supabase.from('interviews').insert([{
+      await client.from('interviews').insert([{
         user_id: finalReport.user_id,
         role: finalReport.role,
         company: finalReport.company,
@@ -912,7 +1135,8 @@ export async function getAssessmentReport(
     report = reportsStore.get(reportId)!;
   } else if (isSupabaseConfigured) {
     try {
-      const { data, error } = await supabase
+      const client = getUserSupabase(context?.authToken);
+      const { data, error } = await client
         .from('interview_assessment_reports')
         .select('*')
         .eq('id', reportId)
@@ -977,7 +1201,8 @@ export async function getAssessmentReportBySession(
   // Check Supabase
   if (isSupabaseConfigured) {
     try {
-      const { data, error } = await supabase
+      const client = getUserSupabase(context?.authToken);
+      const { data, error } = await client
         .from('interview_assessment_reports')
         .select('*')
         .eq('session_id', sessionId)

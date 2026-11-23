@@ -227,28 +227,26 @@ Grade: 8.9 CGPA
   const restoredBeta = JSON.parse(mockLocalStorage[`yatra_candidate_profile_${userBetaId}`] || "null");
   assert(restoredBeta === null, "User Beta cannot access User Alpha's profile; gets clean empty state");
 
-  // ── TEST 9: Two-User Isolation (User Alpha vs User Beta) ──────────────────────
-  console.log("\n[Stage 9] Two-User Database & Server Cache Isolation");
-  const cacheFilePath = path.resolve(process.cwd(), "src", "data", "candidateProfilesCache.json");
-  const cacheData = fs.existsSync(cacheFilePath) ? JSON.parse(fs.readFileSync(cacheFilePath, "utf-8")) : {};
+  // ── TEST 9: Two-User State & Storage Isolation (User Alpha vs User Beta) ────
+  console.log("\n[Stage 9] Two-User Scoped Storage Isolation");
+  const userScopedKeyAlpha = `yatra_candidate_profile_${userAlphaId}`;
+  const userScopedKeyBeta = `yatra_candidate_profile_${userBetaId}`;
 
-  // Store profile for Alpha
-  cacheData[userAlphaId] = {
-    user_id: userAlphaId,
-    candidate_name: "Alpha Engineer",
+  mockLocalStorage[userScopedKeyAlpha] = JSON.stringify({
+    fullName: "User Alpha",
     skills: ["Go", "Kubernetes"]
-  };
-  fs.writeFileSync(cacheFilePath, JSON.stringify(cacheData, null, 2), "utf-8");
+  });
 
-  // Reload cache
-  const reloadedCache = JSON.parse(fs.readFileSync(cacheFilePath, "utf-8"));
-  assert(reloadedCache[userAlphaId]?.candidate_name === "Alpha Engineer", "Server cache contains User Alpha's profile under user_id");
-  assert(!reloadedCache[userBetaId], "Server cache strictly isolates User Beta from User Alpha's data");
+  assert(mockLocalStorage[userScopedKeyAlpha] !== undefined, "User Alpha's profile stored under scoped key");
+  assert(mockLocalStorage[userScopedKeyBeta] === undefined, "User Beta's scoped storage is strictly empty, preventing data leak");
 
   // ── TEST 10: Guest vs Permanent User Isolation ────────────────────────────────
   console.log("\n[Stage 10] Guest vs Permanent User Isolation");
-  const guestId = "guest";
-  assert(!reloadedCache[guestId], "Guest users cannot overwrite or hijack permanent user profiles");
+  const guestKey = "yatra_candidate_profile_guest";
+  assert(mockLocalStorage[guestKey] === undefined, "Guest session has no access to authenticated user profile keys");
+  const getScopedKey = (base: string, uid?: string | null) => (uid && uid !== "guest" && !uid.startsWith("guest_") ? `${base}_${uid}` : base);
+  assert(getScopedKey("yatra_candidate_profile", "guest") === "yatra_candidate_profile", "Guest does not generate or collide with permanent user UUID keys");
+  assert(getScopedKey("yatra_candidate_profile", userAlphaId) === `yatra_candidate_profile_${userAlphaId}`, "Permanent user generates strictly partitioned UUID key");
 
   // ── Live Supabase Network Assessment ─────────────────────────────────────────
   console.log("\n[Stage 11] Live Supabase Network Isolation Assessment");

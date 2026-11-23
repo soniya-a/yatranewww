@@ -18,6 +18,12 @@ export interface YatraAuthLayoutProps {
   authMethod: "google" | "credentials" | null;
   error?: string | null;
   notification?: string | null;
+  verificationStep?: boolean;
+  verificationCode?: string;
+  onVerificationCodeChange?: (val: string) => void;
+  onVerifyCode?: (e?: React.FormEvent) => void;
+  onResendCode?: () => void;
+  onCancelVerification?: () => void;
 }
 
 // Official 4-color Google Icon
@@ -46,7 +52,13 @@ export default function YatraAuthLayout({
   isLoggingIn,
   authMethod,
   error,
-  notification
+  notification,
+  verificationStep = false,
+  verificationCode = "",
+  onVerificationCodeChange,
+  onVerifyCode,
+  onResendCode,
+  onCancelVerification
 }: YatraAuthLayoutProps) {
   const [showPassword, setShowPassword] = useState(false);
 
@@ -450,167 +462,230 @@ export default function YatraAuthLayout({
           {error && <div className={styles.errorAlert} role="alert">{error}</div>}
           {notification && <div className={styles.notifyAlert} role="status">{notification}</div>}
 
-          {/* Continue with Google Button */}
-          <button
-            type="button"
-            className={styles.btnGoogle}
-            onClick={onGoogleClick}
-            disabled={isLoggingIn}
-          >
-            {isLoggingIn && authMethod === "google" ? (
-              <span>Connecting to Google...</span>
-            ) : (
-              <>
-                <GoogleIcon />
-                <span>Continue with Google</span>
-              </>
-            )}
-          </button>
+          {verificationStep ? (
+            /* Email Verification Code Step */
+            <form onSubmit={onVerifyCode} className="space-y-4">
+              <div className="bg-blue-50/80 border border-blue-200/80 rounded-xl p-3 text-xs text-blue-900 leading-relaxed mb-4">
+                A 6-digit verification code has been sent to <strong>{emailOrUser}</strong>. Enter it below to complete registration.
+              </div>
 
-          {/* OR Divider */}
-          <div className={styles.dividerRow}>
-            <div className={styles.dividerLine} />
-            <span className={styles.dividerText}>OR</span>
-            <div className={styles.dividerLine} />
-          </div>
-
-          {/* Input Form */}
-          <form onSubmit={onSubmit}>
-            <div className={styles.fieldGroup}>
-              {/* Name Field (Signup Mode only) */}
-              {mode === "signup" && onNameChange && (
+              <div className={styles.fieldGroup}>
                 <div className={styles.inputWrapper}>
                   <span className={styles.inputIcon}>
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                      <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />
-                      <circle cx="12" cy="7" r="4" />
+                      <rect width="18" height="18" x="3" y="3" rx="2"/>
+                      <path d="m9 12 2 2 4-4"/>
                     </svg>
                   </span>
                   <input
                     type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    maxLength={6}
                     className={styles.formInput}
-                    placeholder="Enter your full name"
-                    value={name}
-                    onChange={(e) => onNameChange(e.target.value)}
+                    placeholder="Enter 6-digit code"
+                    value={verificationCode}
+                    onChange={(e) => onVerificationCodeChange && onVerificationCodeChange(e.target.value.trim())}
                     disabled={isLoggingIn}
-                    autoComplete="name"
+                    autoComplete="one-time-code"
+                    autoFocus
                     required
                   />
                 </div>
-              )}
-
-              {/* Email / Username */}
-              <div className={styles.inputWrapper}>
-                <span className={styles.inputIcon}>
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <rect width="20" height="16" x="2" y="4" rx="2" />
-                    <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
-                  </svg>
-                </span>
-                <input
-                  type="email"
-                  className={styles.formInput}
-                  placeholder="Enter your email"
-                  value={emailOrUser}
-                  onChange={(e) => onEmailOrUserChange(e.target.value)}
-                  disabled={isLoggingIn}
-                  autoComplete="email"
-                  required
-                />
               </div>
 
-              {/* Password */}
-              <div className={styles.inputWrapper}>
-                <span className={styles.inputIcon}>
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
-                    <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-                  </svg>
-                </span>
-                <input
-                  type={showPassword ? "text" : "password"}
-                  className={`${styles.formInput} ${styles.formInputWithEye}`}
-                  placeholder="Enter your password"
-                  value={password}
-                  onChange={(e) => onPasswordChange(e.target.value)}
-                  disabled={isLoggingIn}
-                  autoComplete={mode === "signin" ? "current-password" : "new-password"}
-                  required
-                />
-                <button
-                  type="button"
-                  className={styles.inputEye}
-                  onClick={() => setShowPassword((prev) => !prev)}
-                  aria-label={showPassword ? "Hide password" : "Show password"}
-                >
-                  {showPassword ? (
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                      <path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" x2="22" y1="2" y2="22"/>
-                    </svg>
-                  ) : (
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                      <path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 .696 10.75 10.75 0 0 1-19.876 0" />
-                      <circle cx="12" cy="12" r="3" />
-                    </svg>
-                  )}
-                </button>
-              </div>
-            </div>
+              <button
+                type="submit"
+                className={styles.btnSubmit}
+                disabled={isLoggingIn || !verificationCode}
+              >
+                {isLoggingIn ? "Verifying..." : "Verify & Complete Signup \u2192"}
+              </button>
 
-            {/* Forgot Password Link */}
-            {mode === "signin" && (
-              <div className={styles.forgotPassRow}>
+              <div className="flex items-center justify-between text-xs pt-3">
                 <button
                   type="button"
                   className={styles.forgotLink}
-                  onClick={onForgotPassword}
+                  onClick={onResendCode}
                   disabled={isLoggingIn}
                 >
-                  Forgot password?
+                  Resend code
+                </button>
+                <button
+                  type="button"
+                  className="text-zinc-500 hover:text-zinc-700 bg-transparent border-0 cursor-pointer p-0 text-xs"
+                  onClick={onCancelVerification}
+                  disabled={isLoggingIn}
+                >
+                  Back to signup
                 </button>
               </div>
-            )}
+            </form>
+          ) : (
+            <>
+              {/* Continue with Google Button */}
+              <button
+                type="button"
+                className={styles.btnGoogle}
+                onClick={onGoogleClick}
+                disabled={isLoggingIn}
+              >
+                {isLoggingIn && authMethod === "google" ? (
+                  <span>Connecting to Google...</span>
+                ) : (
+                  <>
+                    <GoogleIcon />
+                    <span>Continue with Google</span>
+                  </>
+                )}
+              </button>
 
-            {/* Sign In / Sign Up Submit Button */}
-            <button
-              type="submit"
-              className={styles.btnSubmit}
-              disabled={isLoggingIn}
-            >
-              {isLoggingIn && authMethod === "credentials" ? (
-                <span>{mode === "signin" ? "Signing In..." : "Creating Account..."}</span>
-              ) : (
-                <span>{mode === "signin" ? "Sign In \u2192" : "Create Account \u2192"}</span>
-              )}
-            </button>
-          </form>
+              {/* OR Divider */}
+              <div className={styles.dividerRow}>
+                <div className={styles.dividerLine} />
+                <span className={styles.dividerText}>OR</span>
+                <div className={styles.dividerLine} />
+              </div>
 
-          {/* Toggle between Sign In and Sign Up */}
-          <div className={styles.formFooter}>
-            {mode === "signin" ? (
-              <>
-                Don't have an account?{" "}
+              {/* Input Form */}
+              <form onSubmit={onSubmit}>
+                <div className={styles.fieldGroup}>
+                  {/* Name Field (Signup Mode only) */}
+                  {mode === "signup" && onNameChange && (
+                    <div className={styles.inputWrapper}>
+                      <span className={styles.inputIcon}>
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />
+                          <circle cx="12" cy="7" r="4" />
+                        </svg>
+                      </span>
+                      <input
+                        type="text"
+                        className={styles.formInput}
+                        placeholder="Enter your full name"
+                        value={name}
+                        onChange={(e) => onNameChange(e.target.value)}
+                        disabled={isLoggingIn}
+                        autoComplete="name"
+                        required
+                      />
+                    </div>
+                  )}
+
+                  {/* Email / Username */}
+                  <div className={styles.inputWrapper}>
+                    <span className={styles.inputIcon}>
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <rect width="20" height="16" x="2" y="4" rx="2" />
+                        <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
+                      </svg>
+                    </span>
+                    <input
+                      type="email"
+                      className={styles.formInput}
+                      placeholder="Enter your email"
+                      value={emailOrUser}
+                      onChange={(e) => onEmailOrUserChange(e.target.value)}
+                      disabled={isLoggingIn}
+                      autoComplete="email"
+                      required
+                    />
+                  </div>
+
+                  {/* Password */}
+                  <div className={styles.inputWrapper}>
+                    <span className={styles.inputIcon}>
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
+                        <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                      </svg>
+                    </span>
+                    <input
+                      type={showPassword ? "text" : "password"}
+                      className={`${styles.formInput} ${styles.formInputWithEye}`}
+                      placeholder="Enter your password"
+                      value={password}
+                      onChange={(e) => onPasswordChange(e.target.value)}
+                      disabled={isLoggingIn}
+                      autoComplete={mode === "signin" ? "current-password" : "new-password"}
+                      required
+                    />
+                    <button
+                      type="button"
+                      className={styles.inputEye}
+                      onClick={() => setShowPassword((prev) => !prev)}
+                      aria-label={showPassword ? "Hide password" : "Show password"}
+                    >
+                      {showPassword ? (
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" x2="22" y1="2" y2="22"/>
+                        </svg>
+                      ) : (
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 .696 10.75 10.75 0 0 1-19.876 0" />
+                          <circle cx="12" cy="12" r="3" />
+                        </svg>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Forgot Password Link */}
+                {mode === "signin" && (
+                  <div className={styles.forgotPassRow}>
+                    <button
+                      type="button"
+                      className={styles.forgotLink}
+                      onClick={onForgotPassword}
+                      disabled={isLoggingIn}
+                    >
+                      Forgot password?
+                    </button>
+                  </div>
+                )}
+
+                {/* Sign In / Sign Up Submit Button */}
                 <button
-                  type="button"
-                  className={styles.signupLink}
-                  onClick={() => onToggleMode("signup")}
+                  type="submit"
+                  className={styles.btnSubmit}
+                  disabled={isLoggingIn}
                 >
-                  Create account
+                  {isLoggingIn && authMethod === "credentials" ? (
+                    <span>{mode === "signin" ? "Signing In..." : "Creating Account..."}</span>
+                  ) : (
+                    <span>{mode === "signin" ? "Sign In \u2192" : "Create Account \u2192"}</span>
+                  )}
                 </button>
-              </>
-            ) : (
-              <>
-                Already have an account?{" "}
-                <button
-                  type="button"
-                  className={styles.signupLink}
-                  onClick={() => onToggleMode("signin")}
-                >
-                  Sign in
-                </button>
-              </>
-            )}
-          </div>
+              </form>
+
+              {/* Toggle between Sign In and Sign Up */}
+              <div className={styles.formFooter}>
+                {mode === "signin" ? (
+                  <>
+                    Don't have an account?{" "}
+                    <button
+                      type="button"
+                      className={styles.signupLink}
+                      onClick={() => onToggleMode("signup")}
+                    >
+                      Create account
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    Already have an account?{" "}
+                    <button
+                      type="button"
+                      className={styles.signupLink}
+                      onClick={() => onToggleMode("signin")}
+                    >
+                      Sign in
+                    </button>
+                  </>
+                )}
+              </div>
+            </>
+          )}
 
           {/* Guest Sandbox Mode (if handler provided) */}
           {onGuestLogin && (

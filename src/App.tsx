@@ -1,13 +1,10 @@
 import React, { useEffect, useState, useRef } from "react";
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
-import { supabase, clearUserSessionData } from "./lib/supabase";
-export interface AppUser {
-  uid: string;
-  email?: string;
-  displayName?: string;
-  isAnonymous?: boolean;
-  getIdToken?: () => Promise<string>;
-}
+import { useUser, useAuth, HandleSSOCallback, SignUp } from "@clerk/react";
+import { useSignIn, useSignUp } from "@clerk/react/legacy";
+import { clearUserSessionData } from "./lib/supabase";
+import { registerAuthHandlers, logoutUser, type AppUser } from "./lib/auth";
+export type { AppUser };
 import Home from "./pages/Home";
 import Interview from "./pages/Interview";
 import AdminDashboard from "./pages/AdminDashboard";
@@ -348,14 +345,47 @@ const GlobalNetworkGrid = () => {
 };
 
 export default function App() {
-  const [user, setUser] = useState<AppUser | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { isLoaded: isUserLoaded, isSignedIn: isUserSignedIn, user: clerkUser } = useUser();
+  const { isLoaded: isAuthLoaded, isSignedIn: isAuthSignedIn, userId, getToken, signOut: clerkSignOut } = useAuth();
+  const { isLoaded: isSignInLoaded, signIn, setActive: setActiveSignIn } = useSignIn();
+  const { isLoaded: isSignUpLoaded, signUp, setActive: setActiveSignUp } = useSignUp();
 
-  // Authentication states
+  const isClerkSignedIn = Boolean(isUserSignedIn || isAuthSignedIn);
+
+  // Guest Sandbox User (for local testing / demo mode)
+  const [guestUser, setGuestUser] = useState<AppUser | null>(() => {
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        const stored = localStorage.getItem("yatra_guest_user");
+        if (stored) return JSON.parse(stored);
+        if (localStorage.getItem("guest_session") === "true") {
+          return {
+            uid: localStorage.getItem("guest_uid") || "guest-123",
+            email: localStorage.getItem("guest_email") || "guest@yatra.ai",
+            displayName: localStorage.getItem("guest_name") || "Student",
+            isAnonymous: true,
+            getIdToken: async () => localStorage.getItem("guest_token") || "guest_token_123"
+          };
+        }
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  });
+
+  // Fallback timeout so unauthenticated / sandbox / test environments never hang on Clerk SDK
+  const [clerkTimeout, setClerkTimeout] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setClerkTimeout(true), 4000);
+    return () => clearTimeout(t);
+  }, []);
+
+  // Authentication submission states
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
 
-  // Cursor mouse tracking
+  // Cursor mouse tracking for mascot
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
 
   useEffect(() => {
@@ -366,60 +396,62 @@ export default function App() {
     return () => window.removeEventListener("mousemove", handleMouseMove);
   }, []);
 
+  // Register active auth handlers synchronously and on update so child components always acquire fresh tokens
+  if (isAuthLoaded && getToken && clerkSignOut) {
+    registerAuthHandlers(getToken, clerkSignOut);
+  }
   useEffect(() => {
-    let isMounted = true;
-    // 1. Initial check for authentic Supabase session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (!isMounted) return;
-      if (session?.user) {
-        setUser({
-          uid: session.user.id,
-          email: session.user.email || (session.user.is_anonymous ? "guest@yatra.ai" : "user@yatra.ai"),
-          displayName: session.user.user_metadata?.full_name || (session.user.is_anonymous ? "Guest Candidate" : session.user.email?.split("@")[0] || "User"),
-          isAnonymous: Boolean(session.user.is_anonymous),
-          getIdToken: async () => session.access_token
-        });
-      } else {
-        setUser(null);
-      }
-      setLoading(false);
-    }).catch(() => {
-      if (isMounted) setLoading(false);
-    });
+    if (isAuthLoaded && getToken && clerkSignOut) {
+      registerAuthHandlers(getToken, clerkSignOut);
+    }
+  }, [isAuthLoaded, getToken, clerkSignOut]);
 
-    // 2. Real-time auth changes listener
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if (!isMounted) return;
-      if (session?.user) {
-        setUser({
-          uid: session.user.id,
-          email: session.user.email || (session.user.is_anonymous ? "guest@yatra.ai" : "user@yatra.ai"),
-          displayName: session.user.user_metadata?.full_name || (session.user.is_anonymous ? "Guest Candidate" : session.user.email?.split("@")[0] || "User"),
-          isAnonymous: Boolean(session.user.is_anonymous),
-          getIdToken: async () => session.access_token
-        });
-      } else if (event === "SIGNED_OUT") {
-        clearUserSessionData();
-        setUser(null);
-      } else {
-        setUser(null);
-      }
-    });
+  // Derive effective user: Clerk authenticated user takes precedence over guest sandbox user
+  const effectiveUser: AppUser | null = (() => {
+    if (isClerkSignedIn && (clerkUser || userId)) {
+      const resolvedName =
+        clerkUser?.fullName ||
+        (clerkUser?.unsafeMetadata?.fullName as string) ||
+        (clerkUser?.publicMetadata?.fullName as string) ||
+        [clerkUser?.firstName, clerkUser?.lastName].filter(Boolean).join(" ") ||
+        clerkUser?.username ||
+        clerkUser?.primaryEmailAddress?.emailAddress?.split("@")[0] ||
+        "Candidate";
+      return {
+        uid: clerkUser?.id || userId || "user_authenticated",
+        email: clerkUser?.primaryEmailAddress?.emailAddress || "user@yatra.ai",
+        displayName: resolvedName,
+        isAnonymous: false,
+        avatarUrl: clerkUser?.imageUrl,
+        getIdToken: async () => (await getToken()) || ""
+      };
+    }
+    if (guestUser && !isClerkSignedIn) {
+      return guestUser;
+    }
+    return null;
+  })();
 
-    return () => {
-      isMounted = false;
-      subscription.unsubscribe();
-    };
-  }, []);
-
-  // Standard Login / Sign-up trigger with Supabase Auth
-  const handleAuthLogin = async (credentials?: { email: string; password?: string; name?: string; mode?: "signin" | "signup" }): Promise<{ error?: string } | void> => {
+  // Email/Password login and signup handler powered by Clerk
+  const handleAuthLogin = async (credentials?: {
+    email: string;
+    password?: string;
+    name?: string;
+    mode?: "signin" | "signup";
+  }): Promise<{ error?: string; requiresVerification?: boolean } | void> => {
     setIsLoggingIn(true);
     setAuthError(null);
 
     const emailToUse = credentials?.email?.trim();
     const passwordToUse = credentials?.password || "";
-    const nameToUse = credentials?.name?.trim() || emailToUse?.split("@")[0] || "User";
+    const nameToUse = credentials?.name?.trim() || "";
+
+    if (credentials?.mode === "signup" && !nameToUse) {
+      setIsLoggingIn(false);
+      const msg = "Please enter your full name.";
+      setAuthError(msg);
+      return { error: msg };
+    }
 
     if (!emailToUse) {
       setIsLoggingIn(false);
@@ -437,55 +469,133 @@ export default function App() {
 
     try {
       if (credentials?.mode === "signup") {
-        if (passwordToUse.length < 6) {
-          throw new Error("Password must be at least 6 characters long.");
+        if (!isSignInLoaded || !signIn) {
+          throw new Error("Authentication service is initializing. Please try again.");
+        }
+        if (passwordToUse.length < 8) {
+          throw new Error("Password must be at least 8 characters long.");
         }
         clearUserSessionData();
-        const { data, error } = await supabase.auth.signUp({
-          email: emailToUse,
-          password: passwordToUse,
-          options: {
-            data: {
-              full_name: nameToUse
-            }
-          }
+        setGuestUser(null);
+        localStorage.removeItem("yatra_guest_user");
+
+        // Create account via backend Clerk endpoint so user's full name and 8+ character password are saved accurately
+        const signupRes = await fetch("/api/auth/signup", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: nameToUse,
+            email: emailToUse,
+            password: passwordToUse
+          })
         });
-        if (error) throw error;
-        if (data.session) {
-          setUser({
-            uid: data.session.user.id,
-            email: data.session.user.email || emailToUse,
-            displayName: data.session.user.user_metadata?.full_name || nameToUse,
-            isAnonymous: false,
-            getIdToken: async () => data.session!.access_token
+        const signupData = await signupRes.json();
+
+        if (!signupRes.ok || !signupData?.success) {
+          const errMsg = signupData?.error || "Could not create account. Please check your details and try again.";
+          setAuthError(errMsg);
+          return { error: errMsg };
+        }
+
+        try {
+          localStorage.setItem("userName", nameToUse);
+        } catch {}
+
+        // Activate Clerk session on frontend using the newly registered credentials (or sign-in token fallback)
+        try {
+          const signInRes = await signIn.create({
+            identifier: emailToUse,
+            password: passwordToUse
           });
+          if (signInRes.status === "complete" && setActiveSignIn && signInRes.createdSessionId) {
+            await setActiveSignIn({ session: signInRes.createdSessionId });
+            return {};
+          }
+        } catch (signInErr) {
+          if (signupData.signInToken) {
+            const ticketRes = await signIn.create({
+              strategy: "ticket",
+              ticket: signupData.signInToken
+            });
+            if (ticketRes.status === "complete" && setActiveSignIn && ticketRes.createdSessionId) {
+              await setActiveSignIn({ session: ticketRes.createdSessionId });
+              return {};
+            }
+          } else {
+            throw signInErr;
+          }
         }
         return {};
       } else {
+        // Sign in mode
+        if (!isSignInLoaded || !signIn) {
+          throw new Error("Authentication service is initializing. Please try again.");
+        }
         clearUserSessionData();
-        const { data, error } = await supabase.auth.signInWithPassword({
-          email: emailToUse,
+        setGuestUser(null);
+        localStorage.removeItem("yatra_guest_user");
+        const res = await signIn.create({
+          identifier: emailToUse,
           password: passwordToUse
         });
-        if (error) throw error;
-        if (data.session) {
-          setUser({
-            uid: data.session.user.id,
-            email: data.session.user.email || emailToUse,
-            displayName: data.session.user.user_metadata?.full_name || emailToUse.split("@")[0] || "User",
-            isAnonymous: false,
-            getIdToken: async () => data.session!.access_token
-          });
+
+        if (res.status === "complete") {
+          if (setActiveSignIn && res.createdSessionId) {
+            await setActiveSignIn({ session: res.createdSessionId });
+          }
+          return {};
+        } else if (res.status === "needs_first_factor" || res.status === "needs_second_factor") {
+          return { error: "Multi-factor authentication required. Please check your verification method." };
         }
         return {};
       }
     } catch (err: any) {
-      console.warn("[Supabase Auth] Login/Signup failed:", err?.message);
-      const msg = err?.message || "Authentication failed. Please check your credentials.";
+      console.warn("[Clerk Auth] Login/Signup notice:", err);
+      const msg = err?.errors?.[0]?.longMessage || err?.errors?.[0]?.message || err?.message || "Authentication failed. Please check your credentials.";
       setAuthError(msg);
       return { error: msg };
     } finally {
       setIsLoggingIn(false);
+    }
+  };
+
+  // Dedicated email verification code submission
+  const handleVerifyCode = async (code: string): Promise<{ error?: string } | void> => {
+    if (!isSignUpLoaded || !signUp) {
+      return { error: "Authentication service is initializing. Please try again." };
+    }
+    setIsLoggingIn(true);
+    setAuthError(null);
+    try {
+      const verified = await signUp.attemptEmailAddressVerification({ code: code.trim() });
+      if (verified.status === "complete") {
+        if (setActiveSignUp && verified.createdSessionId) {
+          await setActiveSignUp({ session: verified.createdSessionId });
+        }
+        return {};
+      } else {
+        return { error: "Verification could not be completed. Please check the code." };
+      }
+    } catch (err: any) {
+      console.warn("[Clerk Auth] Code verification notice:", err);
+      const msg = err?.errors?.[0]?.longMessage || err?.errors?.[0]?.message || err?.message || "Invalid verification code. Please check and try again.";
+      setAuthError(msg);
+      return { error: msg };
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
+
+  // Resend verification code
+  const handleResendCode = async (): Promise<{ error?: string; message?: string }> => {
+    if (!isSignUpLoaded || !signUp) {
+      return { error: "Authentication service is initializing. Please try again." };
+    }
+    try {
+      await signUp.prepareEmailAddressVerification({ strategy: "email_code" });
+      return { message: "A fresh verification code has been sent to your email." };
+    } catch (err: any) {
+      return { error: err?.errors?.[0]?.message || err?.message || "Failed to resend verification code." };
     }
   };
 
@@ -495,13 +605,16 @@ export default function App() {
       if (!cleanEmail || !cleanEmail.includes("@")) {
         return { error: "Please enter a valid email address." };
       }
-      const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
-        redirectTo: `${window.location.origin}/`
+      if (!isSignInLoaded) {
+        return { error: "Authentication service is initializing. Please wait." };
+      }
+      await signIn.create({
+        strategy: "reset_password_email_code",
+        identifier: cleanEmail
       });
-      if (error) throw error;
       return { message: `Password reset instructions sent to ${cleanEmail}.` };
     } catch (err: any) {
-      return { error: err?.message || "Failed to send password reset email." };
+      return { error: err?.errors?.[0]?.message || err?.message || "Failed to send password reset email." };
     }
   };
 
@@ -509,17 +622,32 @@ export default function App() {
     setIsLoggingIn(true);
     setAuthError(null);
     try {
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: 'google',
-        options: {
-          redirectTo: window.location.origin
-        }
-      });
-      if (error) throw error;
+      clearUserSessionData();
+      setGuestUser(null);
+      if (typeof window !== "undefined" && window.localStorage) {
+        localStorage.removeItem("yatra_guest_user");
+        localStorage.removeItem("guest_session");
+      }
+
+      const redirectParams = {
+        strategy: "oauth_google" as const,
+        redirectUrl: "/sso-callback",
+        redirectUrlComplete: "/",
+        continueSignUp: true,
+        continueSignIn: true
+      };
+
+      if (signIn) {
+        await signIn.authenticateWithRedirect(redirectParams);
+      } else if (signUp) {
+        await signUp.authenticateWithRedirect(redirectParams);
+      } else {
+        throw new Error("Authentication service is initializing. Please wait.");
+      }
     } catch (error: any) {
-      console.warn("Supabase Google OAuth error:", error);
-      setAuthError(error?.message || "Google sign in failed. Please try email/password.");
-    } finally {
+      console.warn("[Clerk OAuth] Google sign in notice:", error);
+      const msg = error?.errors?.[0]?.longMessage || error?.errors?.[0]?.message || error?.message || "Google sign in failed. Please try email/password.";
+      setAuthError(msg);
       setIsLoggingIn(false);
     }
   };
@@ -529,29 +657,102 @@ export default function App() {
     setAuthError(null);
     try {
       clearUserSessionData();
-      const { data, error } = await supabase.auth.signInAnonymously();
-      if (error) {
-        console.warn("[Supabase Auth] Anonymous sign-in unavailable:", error.message);
-        setAuthError("Guest/Anonymous authentication is not enabled on this Supabase project. Please sign in or create an account.");
-        return;
-      }
-      if (data.session) {
-        setUser({
-          uid: data.session.user.id,
-          email: data.session.user.email || "guest@yatra.ai",
-          displayName: data.session.user.user_metadata?.full_name || "Guest Candidate",
-          isAnonymous: true,
-          getIdToken: async () => data.session!.access_token
-        });
-      }
-    } catch (err: any) {
-      console.warn("[Supabase Auth] Guest sign-in failed:", err);
-      setAuthError("Guest authentication is unavailable. Please sign in with your email or Google.");
+      const guestId = `guest_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      const guest: AppUser = {
+        uid: guestId,
+        email: "guest@yatra.ai",
+        displayName: "Guest Candidate",
+        isAnonymous: true,
+        getIdToken: async () => guestId
+      };
+      setGuestUser(guest);
+      localStorage.setItem("yatra_guest_user", JSON.stringify(guest));
     } finally {
       setIsLoggingIn(false);
     }
   };
 
+  // SSO Callback handling: Mount HandleSSOCallback to resolve pending Protect challenges and complete session
+  const isSSOCallback = typeof window !== "undefined" && window.location.pathname.startsWith("/sso-callback");
+
+  if (isSSOCallback) {
+    if (isClerkSignedIn) {
+      if (typeof window !== "undefined") {
+        window.location.replace("/");
+      }
+      return (
+        <div className="h-screen w-full flex flex-col items-center justify-center bg-zinc-50 relative">
+          <div className="flex flex-col items-center gap-4">
+            <div className="w-14 h-14 bg-purple-600/10 rounded-2xl flex items-center justify-center border border-purple-200 shadow-md animate-pulse">
+              <BrainCircuit className="w-7 h-7 text-purple-600" />
+            </div>
+            <div className="text-zinc-500 font-mono text-[11px] uppercase tracking-widest animate-pulse">
+              Entering YATRA Dashboard...
+            </div>
+          </div>
+        </div>
+      );
+    }
+    return (
+      <div className="h-screen w-full flex flex-col items-center justify-center bg-zinc-50 relative">
+        <div className="flex flex-col items-center gap-4 mb-4">
+          <div className="w-14 h-14 bg-purple-600/10 rounded-2xl flex items-center justify-center border border-purple-200 shadow-md animate-pulse">
+            <BrainCircuit className="w-7 h-7 text-purple-600" />
+          </div>
+          <div className="text-zinc-500 font-mono text-[11px] uppercase tracking-widest animate-pulse">
+            Completing Google Sign-In...
+          </div>
+        </div>
+        <HandleSSOCallback
+          navigateToApp={() => {
+            if (typeof window !== "undefined") {
+              window.location.replace("/");
+            }
+          }}
+          navigateToSignIn={() => {
+            if (typeof window !== "undefined") {
+              window.location.replace("/");
+            }
+          }}
+          navigateToSignUp={() => {
+            if (typeof window !== "undefined") {
+              window.location.replace("/sign-up");
+            }
+          }}
+        />
+      </div>
+    );
+  }
+
+  // Dedicated in-app Clerk Sign-Up route so pending Protect (bot detection / Turnstile) challenges can resolve
+  const isSignUpRoute = typeof window !== "undefined" && window.location.pathname.startsWith("/sign-up");
+  if (isSignUpRoute && !effectiveUser) {
+    return (
+      <div className="min-h-screen w-full flex flex-col items-center justify-center bg-zinc-50 p-4 relative">
+        <div className="flex items-center gap-3 mb-6">
+          <div className="w-10 h-10 bg-purple-600/10 rounded-xl flex items-center justify-center border border-purple-200 shadow-sm">
+            <BrainCircuit className="w-5 h-5 text-purple-600" />
+          </div>
+          <span className="font-bold text-lg text-zinc-900 tracking-tight">YATRA</span>
+        </div>
+        <div className="w-full max-w-md flex justify-center">
+          <SignUp 
+            routing="path" 
+            path="/sign-up" 
+            signInUrl="/"
+            fallbackRedirectUrl="/"
+            forceRedirectUrl="/"
+          />
+        </div>
+      </div>
+    );
+  }
+
+  // Loading state while Clerk SDK initializes:
+  // If Clerk is still loading, display the portal loader unless clerkTimeout has expired.
+  // When effectiveUser is resolved, bypass loader immediately.
+  const isAuthInitializing = (!isUserLoaded || !isAuthLoaded) && !clerkTimeout;
+  const loading = isAuthInitializing && !effectiveUser;
   if (loading) {
     return (
       <div className="h-screen w-full flex flex-col items-center justify-center bg-zinc-50 relative">
@@ -569,13 +770,15 @@ export default function App() {
     );
   }
 
-  // Supabase Auth Login Experience
-  if (!user) {
+  // If unauthenticated, show the approved YATRA login layout
+  if (!effectiveUser) {
     return (
       <Login 
         onLogin={handleAuthLogin} 
         onGoogleLogin={handleGoogleLogin} 
         onForgotPassword={handleForgotPassword}
+        onVerifyCode={handleVerifyCode}
+        onResendCode={handleResendCode}
         onGuestLogin={handleGuestLogin}
         isLoggingIn={isLoggingIn} 
         authError={authError}
@@ -584,10 +787,14 @@ export default function App() {
     );
   }
 
-  // Visual layout if user is logged in: React router dashboard views (Home / Interview)
+  // Visual layout for authenticated users
   return (
     <BrowserRouter>
       <Routes>
+        <Route path="/sso-callback" element={<Navigate to="/" replace />} />
+        <Route path="/sso-callback/*" element={<Navigate to="/" replace />} />
+        <Route path="/sign-up" element={<Navigate to="/" replace />} />
+        <Route path="/sign-up/*" element={<Navigate to="/" replace />} />
         <Route path="/" element={<Home />} />
         <Route path="/interview" element={<Interview />} />
         <Route path="/admin" element={<AdminDashboard />} />

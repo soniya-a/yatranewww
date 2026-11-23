@@ -5,33 +5,25 @@ import { createClient } from '@supabase/supabase-js';
  * Browser-safe environment variable resolution for Vite frontend.
  * Resolves from Vite's import.meta.env or Vite-defined process.env fallback.
  */
-const getBrowserEnv = (key: string): string => {
-  try {
-    // 1. Vite ESM import.meta.env
-    const metaEnv = (import.meta as any)?.env;
-    if (metaEnv) {
-      if (metaEnv[key]) return metaEnv[key] as string;
-      if (metaEnv[`VITE_${key}`]) return metaEnv[`VITE_${key}`] as string;
-    }
-  } catch {}
-  // 2. process.env (injected at build time via vite.config.ts define block)
-  if (typeof process !== 'undefined' && process.env && process.env[key]) {
-    return process.env[key] as string;
-  }
-  return '';
-};
+const DEFAULT_SUPABASE_URL = 'https://vimllthildskrgkjpwdv.supabase.co';
+const DEFAULT_SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZpbWxsdGhpbGRza3Jna2pwd2R2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc4Mzc2MDgsImV4cCI6MjEwMzQxMzYwOH0.5wD2pCs4EojoUK4cOy08U1Q2XHEgPgC5TywFyJhcdG0';
 
-const supabaseUrl = getBrowserEnv('SUPABASE_URL') || getBrowserEnv('VITE_SUPABASE_URL');
-const supabaseKey = getBrowserEnv('SUPABASE_PUBLISHABLE_KEY') || getBrowserEnv('VITE_SUPABASE_ANON_KEY');
+const supabaseUrl: string =
+  (typeof process !== 'undefined' && process.env?.SUPABASE_URL) ||
+  DEFAULT_SUPABASE_URL;
+
+const supabaseKey: string =
+  (typeof process !== 'undefined' && process.env?.SUPABASE_PUBLISHABLE_KEY) ||
+  DEFAULT_SUPABASE_ANON_KEY;
 
 export const isSupabaseConfigured = Boolean(
-  supabaseUrl && supabaseUrl.trim() !== '' && !supabaseUrl.includes('placeholder') &&
+  supabaseUrl && supabaseUrl.trim() !== '' && !supabaseUrl.includes('placeholder') && !supabaseUrl.includes('vimllthildskrgkjpwdv') &&
   supabaseKey && supabaseKey.trim() !== '' && !supabaseKey.includes('placeholder')
 );
 
 export const supabase = createClient(
-  supabaseUrl || 'https://vimllthildskrgkjpwdv.supabase.co',
-  supabaseKey || 'placeholder-key',
+  supabaseUrl,
+  supabaseKey,
   {
     auth: {
       persistSession: true,
@@ -41,6 +33,57 @@ export const supabase = createClient(
   }
 );
 
+// Bridge Supabase auth getSession to return active Clerk token seamlessly
+if (typeof window !== 'undefined') {
+  const originalGetSession = supabase.auth.getSession.bind(supabase.auth);
+  supabase.auth.getSession = (async () => {
+    try {
+      const { getAuthToken } = await import('./auth');
+      const token = await getAuthToken();
+      if (token) {
+        let uid = 'user';
+        let email = 'user@yatra.ai';
+        try {
+          const parts = token.split('.');
+          if (parts.length >= 2) {
+            const decoded = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+            uid = decoded.sub || uid;
+            email = decoded.email || email;
+          } else if (token.startsWith('guest_')) {
+            uid = token;
+            email = 'guest@yatra.ai';
+          }
+        } catch {}
+
+        return {
+          data: {
+            session: {
+              access_token: token,
+              token_type: 'bearer',
+              expires_in: 3600,
+              refresh_token: '',
+              user: {
+                id: uid,
+                app_metadata: {},
+                user_metadata: { full_name: 'Candidate' },
+                aud: 'authenticated',
+                created_at: new Date().toISOString(),
+                email,
+                is_anonymous: uid.startsWith('guest')
+              }
+            } as any
+          },
+          error: null
+        };
+      }
+    } catch {}
+    if (!isSupabaseConfigured) {
+      return { data: { session: null }, error: null };
+    }
+    return originalGetSession();
+  }) as any;
+}
+
 /**
  * Returns a Supabase client scoped to an authenticated user's JWT.
  */
@@ -49,8 +92,8 @@ export const getUserSupabase = (authToken?: string) => {
   const cleanToken = authToken.startsWith('Bearer ') ? authToken.substring(7).trim() : authToken.trim();
   if (!cleanToken) return supabase;
   return createClient(
-    supabaseUrl || 'https://vimllthildskrgkjpwdv.supabase.co',
-    supabaseKey || 'placeholder-key',
+    supabaseUrl,
+    supabaseKey,
     {
       global: {
         headers: {

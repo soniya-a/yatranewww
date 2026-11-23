@@ -5,7 +5,7 @@ export interface CompanyJob {
   id: string;
   company: string;
   role: string;
-  category: "aiml" | "datascience" | "technical" | "mechanical" | "civil" | "electrical" | "architecture" | "accounting" | "banking" | "startup";
+  category: "aiml" | "datascience" | "technical" | "mechanical" | "civil" | "electrical" | "ece" | "architecture" | "accounting" | "banking" | "startup";
   isStartup: boolean;
   requirements: string[];
   description: string;
@@ -172,6 +172,32 @@ const CATEGORIES_DATA = {
     reasons: [
       "Your background in power distribution, SLD drafting, and MATLAB Simulink modeling aligns perfectly with our power engineering team.",
       "Strong expertise in PLC-SCADA automation and switchgear inspection fits our industrial automation division requirements."
+    ]
+  },
+  ece: {
+    companies: [
+      "Texas Instruments", "Qualcomm", "NXP Semiconductors", "Analog Devices",
+      "STMicroelectronics", "Microchip Technology", "Broadcom", "Synopsys",
+      "Cadence Design Systems", "ARM", "Infineon Technologies", "Renesas Electronics",
+      "MediaTek", "Intel Embedded"
+    ],
+    roles: [
+      "Embedded Systems Engineer", "VLSI Design Engineer", "Firmware Development Engineer",
+      "RTL Verification Engineer", "RF & Signal Processing Engineer", "Hardware Board Design Engineer"
+    ],
+    requirements: [
+      "Embedded C / C++", "Microcontrollers (STM32 / ARM Cortex)", "RTOS & FreeRTOS",
+      "Communication Protocols (I2C, SPI, UART, CAN)", "Verilog / SystemVerilog & FPGA",
+      "PCB Layout & Signal Integrity", "Digital Signal Processing (DSP)", "Oscilloscope & Logic Analyzer Debugging"
+    ],
+    descriptions: [
+      "Develop real-time embedded firmware, device drivers, and RTOS task schedulers for low-power microcontroller platforms.",
+      "Design and verify high-speed RTL modules in Verilog/SystemVerilog and synthesize digital architectures on FPGA targets.",
+      "Architect mixed-signal multi-layer PCBs, perform signal integrity analysis, and validate hardware prototypes in the lab."
+    ],
+    reasons: [
+      "Your hands-on proficiency in Embedded C, microcontroller interfacing (I2C/SPI/UART), and RTOS aligns directly with our embedded systems team.",
+      "Strong foundation in digital electronics, Verilog/FPGA design, and hardware debugging matches our silicon and board engineering requirements."
     ]
   },
   architecture: {
@@ -372,6 +398,14 @@ export function matchResumeToRegistry(resumeText: string, searchCategory?: strin
       "siemens tia", "power factor", "apfc", "inverter", "solar grid", "panel wiring",
       "switchgear inspection", "relay coordination"
     ],
+    ece: [
+      "electronics and communication", "electronics & communication", "ece", "embedded systems",
+      "embedded engineer", "embedded c", "firmware", "vlsi", "verilog", "systemverilog",
+      "vhdl", "fpga", "asic", "microcontroller", "stm32", "arm cortex", "esp32", "rtos",
+      "freertos", "i2c", "spi", "uart", "can bus", "pcb design", "pcb layout", "altium",
+      "cadence", "synopsys", "vivado", "signal processing", "dsp", "rf engineering",
+      "oscilloscope", "logic analyzer", "mixed-signal"
+    ],
     aiml: [
       "machine learning", "deep learning", "pytorch", "tensorflow", "neural network",
       "transformer", "large language model", "llm", "huggingface", "computer vision",
@@ -413,6 +447,7 @@ export function matchResumeToRegistry(resumeText: string, searchCategory?: strin
     mechanical: 0,
     civil: 0,
     electrical: 0,
+    ece: 0,
     aiml: 0,
     datascience: 0,
     technical: 0,
@@ -436,9 +471,10 @@ export function matchResumeToRegistry(resumeText: string, searchCategory?: strin
 
   // Explicit title boosts
   if (/\bmechanical (design )?engineer\b/i.test(norm)) scores.mechanical += 30;
-  if (/\b(civil|structural) engineer\b/i.test(norm)) scores.civil += 30;
+  if (/\b(civil|structural) (site )?engineer\b/i.test(norm)) scores.civil += 30;
   if (/\b(electrical|electronics & electrical|eee) (design |trainee )?engineer\b/i.test(norm) || /\bpower systems\b/i.test(norm)) scores.electrical += 30;
-  if (/\b(machine learning|ml) engineer\b/i.test(norm) || /\bai research\b/i.test(norm)) scores.aiml += 30;
+  if (/\b(embedded|vlsi|firmware|ece|electronics (&|and) communication) (systems |design )?engineer\b/i.test(norm) || /\b(embedded systems|vlsi design|electronics and communication)\b/i.test(norm)) scores.ece += 35;
+  if (/\b(machine learning|ml|applied ai|ai) engineer\b/i.test(norm) || /\bai research\b/i.test(norm)) scores.aiml += 30;
   if (/\bdata (scientist|analyst)\b/i.test(norm)) scores.datascience += 30;
   if (/\bsoftware (engineer|developer)\b/i.test(norm) || /\bfull-?stack\b/i.test(norm)) scores.technical += 30;
   if (norm.includes("architect")) scores.architecture += 20;

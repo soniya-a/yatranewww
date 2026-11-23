@@ -7,7 +7,7 @@ interface VoiceControlsProps {
   isCameraOn?: boolean;
   onToggleCamera?: () => void;
   onSubmitAnswer: () => void;
-  onSkipQuestion: () => void;
+  onSkipQuestion?: () => void; // Deprecated - questions are mandatory
   canSubmit: boolean;
   inputText: string;
   onInputTextChange: (text: string) => void;
@@ -20,7 +20,6 @@ export const VoiceControls: React.FC<VoiceControlsProps> = ({
   isCameraOn = false,
   onToggleCamera,
   onSubmitAnswer,
-  onSkipQuestion,
   canSubmit,
   inputText,
   onInputTextChange,
@@ -124,26 +123,15 @@ export const VoiceControls: React.FC<VoiceControlsProps> = ({
         </div>
       </div>
 
-      {/* Bottom Action Buttons: Submit Answer & Next + Skip Question */}
-      <div className="w-full grid grid-cols-1 sm:grid-cols-3 gap-3 relative z-10 pt-1">
-        {/* Submit & Next Button (occupies 2 columns on wide screens) */}
+      {/* Mandatory Action Button: Submit Answer & Next */}
+      <div className="w-full relative z-10 pt-1">
         <button
           onClick={onSubmitAnswer}
           disabled={!canSubmit || disabled}
-          className="sm:col-span-2 py-3.5 px-6 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:hover:bg-blue-600 active:scale-[0.99] text-white text-xs font-bold uppercase tracking-wider shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer"
+          className="w-full py-3.5 px-6 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:hover:bg-blue-600 active:scale-[0.99] text-white text-xs font-bold uppercase tracking-wider shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer"
         >
           <span>Submit Answer & Next</span>
           <ChevronRight className="w-4 h-4" />
-        </button>
-
-        {/* Skip Question Button */}
-        <button
-          onClick={onSkipQuestion}
-          disabled={disabled}
-          className="py-3.5 px-4 rounded-xl border border-gray-300 hover:bg-gray-50 active:scale-[0.99] text-gray-700 text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
-        >
-          <FastForward className="w-3.5 h-3.5 text-gray-500" />
-          <span>Skip Question</span>
         </button>
       </div>
     </div>

@@ -2,7 +2,7 @@ import React from "react";
 import { 
   CheckCircle, AlertCircle, Briefcase, GraduationCap, 
   Code, Award, MapPin, Mail, Phone, ExternalLink, 
-  Github, Linkedin, Globe, Sparkles, ShieldCheck, ChevronRight
+  Github, Linkedin, Globe, Sparkles, ShieldCheck, ChevronRight, X
 } from "lucide-react";
 import { ResumeIntelligenceData } from "../lib/resume/resumeSchema";
 
@@ -11,6 +11,7 @@ interface ResumeIntelligenceDashboardProps {
   isLoading?: boolean;
   parseError?: string | null;
   onRetry?: () => void;
+  onDismiss?: () => void;
   onFindJobs?: () => void;
   onPrepareInterview?: () => void;
 }
@@ -20,6 +21,7 @@ export const ResumeIntelligenceDashboard: React.FC<ResumeIntelligenceDashboardPr
   isLoading = false,
   parseError = null,
   onRetry,
+  onDismiss,
   onFindJobs,
   onPrepareInterview
 }) => {
@@ -38,21 +40,31 @@ export const ResumeIntelligenceDashboard: React.FC<ResumeIntelligenceDashboardPr
 
   if (parseError) {
     return (
-      <div className="bg-red-50 border border-red-200 rounded-2xl p-6 text-left">
+      <div className="bg-red-50 border border-red-200 rounded-2xl p-6 text-left relative">
         <div className="flex items-start gap-3">
           <AlertCircle className="w-5 h-5 text-red-600 mt-0.5 shrink-0" />
-          <div className="flex-1">
+          <div className="flex-1 pr-6">
             <h4 className="text-sm font-bold text-red-900">Resume Intelligence Notice</h4>
             <p className="text-xs text-red-700 mt-1 leading-relaxed">{parseError}</p>
             {onRetry && (
               <button
                 onClick={onRetry}
-                className="mt-3 px-4 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-semibold transition-all shadow-sm"
+                className="mt-3 px-4 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-semibold transition-all shadow-sm cursor-pointer"
               >
                 Retry Analysis
               </button>
             )}
           </div>
+          {onDismiss && (
+            <button
+              onClick={onDismiss}
+              className="text-red-400 hover:text-red-700 p-1 rounded-lg transition-colors cursor-pointer"
+              title="Dismiss notice"
+              aria-label="Dismiss notice"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
         </div>
       </div>
     );

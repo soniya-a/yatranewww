@@ -10,8 +10,11 @@ import {
   TrendingUp, AlertTriangle, Lock
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { useClerk, useUser, useAuth } from "@clerk/react";
 import { supabase, clearUserSessionData } from "../lib/supabase";
+import { logoutUser, getAuthToken } from "../lib/auth";
 import { LiveJobsView } from "../components/LiveJobsView";
+import { CompanyIntelligenceModal } from "../components/interview/CompanyIntelligenceModal";
 import { CareerRoadmapView } from "../components/CareerRoadmapView";
 import { CandidateProfile } from "../types/candidateProfile";
 import { buildCanonicalProfile } from "../lib/profile/candidateProfileBuilder";
@@ -75,7 +78,7 @@ interface ParsedResume {
 }
 
 const MAX_RESUME_FILE_SIZE_BYTES = 10 * 1024 * 1024;
-const SUPPORTED_RESUME_EXTENSIONS = new Set(['pdf', 'docx', 'txt', 'md', 'png', 'jpg', 'jpeg', 'webp']);
+const SUPPORTED_RESUME_EXTENSIONS = new Set(['pdf', 'docx', 'doc', 'txt', 'md', 'png', 'jpg', 'jpeg', 'webp']);
 
 interface SavedInterviewReport {
   id: string;
@@ -94,12 +97,16 @@ interface SavedInterviewReport {
 
 export default function Home() {
   const navigate = useNavigate();
+  const { signOut } = useClerk();
+  const { user: clerkUser, isSignedIn: isClerkSignedIn } = useUser();
+  const { getToken: clerkGetToken, userId: clerkUserId } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // ── State (all preserved from original) ──────────────────────────────────
 
   // Resume & Parsing
   const [resumeInput, setResumeInput] = useState("");
+  const [selectedResumeFile, setSelectedResumeFile] = useState<File | null>(null);
   const [candidateSkills, setCandidateSkills] = useState("");
   const [isParsingResume, setIsParsingResume] = useState(false);
   const [parseResult, setParseResult] = useState<any>(null);
@@ -134,6 +141,30 @@ export default function Home() {
   const [userEmail, setUserEmail] = useState("");
   const [userName, setUserName] = useState("Student");
 
+  const resolvedDisplayName = (() => {
+    if (isClerkSignedIn && clerkUser) {
+      return (
+        clerkUser.fullName ||
+        (clerkUser.unsafeMetadata?.fullName as string) ||
+        (clerkUser.publicMetadata?.fullName as string) ||
+        [clerkUser.firstName, clerkUser.lastName].filter(Boolean).join(" ") ||
+        clerkUser.username ||
+        clerkUser.primaryEmailAddress?.emailAddress?.split("@")[0] ||
+        "Student"
+      );
+    }
+    return userName || "Student";
+  })();
+
+  const resolvedInitials = (() => {
+    const clean = (resolvedDisplayName || "ST").trim();
+    const parts = clean.split(/\s+/).filter(Boolean);
+    if (parts.length >= 2) {
+      return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+    }
+    return clean.substring(0, 2).toUpperCase() || "ST";
+  })();
+
   // Tab navigation
   const [activeTab, setActiveTab] = useState<"home" | "resume" | "live-jobs" | "interview" | "roadmap">(() => {
     if (typeof window !== "undefined") {
@@ -153,13 +184,43 @@ export default function Home() {
   const [isLoadingInterview, setIsLoadingInterview] = useState(false);
   const [isLaunchingDirectInterview, setIsLaunchingDirectInterview] = useState(false);
   const [directInterviewTarget, setDirectInterviewTarget] = useState<{ company: string; role: string } | null>(null);
+  const [isIntelligenceModalOpen, setIsIntelligenceModalOpen] = useState(false);
 
   const getAuthContext = async () => {
-    const { data: { session } } = await supabase.auth.getSession();
-    const uid = session?.user?.id || localStorage.getItem("guest_uid") || "guest";
-    const name = session?.user?.user_metadata?.full_name || localStorage.getItem("guest_name") || "Student";
-    const email = session?.user?.email || localStorage.getItem("guest_email") || "Student";
-    const token = session?.access_token || "";
+    let token = "";
+    try {
+      if (clerkGetToken) {
+        const t = await clerkGetToken();
+        if (t && t.trim()) token = t.trim();
+      }
+    } catch {}
+    if (!token) {
+      token = await getAuthToken();
+    }
+
+    const uid =
+      (isClerkSignedIn && (clerkUser?.id || clerkUserId)) ||
+      localStorage.getItem("guest_uid") ||
+      (token.startsWith("guest_") ? token : "guest");
+
+    const name = resolvedDisplayName;
+    const email =
+      (isClerkSignedIn && clerkUser?.primaryEmailAddress?.emailAddress) ||
+      localStorage.getItem("guest_email") ||
+      userEmail ||
+      "user@yatra.ai";
+
+    const session = token
+      ? {
+          access_token: token,
+          user: {
+            id: uid,
+            email,
+            user_metadata: { full_name: name }
+          }
+        }
+      : null;
+
     return { session, uid, name, email, token };
   };
 
@@ -167,92 +228,42 @@ export default function Home() {
     return uid && uid !== "guest" && !uid.startsWith("guest_") ? `${base}_${uid}` : base;
   };
 
-  const fetchSavedResume = async () => {
+  const restoreScopedResumeCache = async () => {
     try {
-      const { session, uid, token } = await getAuthContext();
+      const { session, uid } = await getAuthContext();
+      // Ensure cached data is never displayed before the current Supabase session is verified
       const isAuthUser = Boolean(session?.user && uid && !uid.startsWith("guest") && !localStorage.getItem("guest_session"));
 
-      // 1. If authenticated, fetch authoritative profile from database endpoint
-      if (isAuthUser && token) {
-        try {
-          const res = await fetch("/api/resume/latest", {
-            headers: { "Authorization": `Bearer ${token}` }
-          });
-          if (res.ok) {
-            const json = await res.json();
-            if (json?.profile) {
-              const row = json.profile;
-              const restoredProfile: CandidateProfile = {
-                fullName: row.candidate_name,
-                headline: row.headline,
-                domain: row.metadata?.domain || "software",
-                primaryRole: row.metadata?.primaryRole || null,
-                targetRoles: Array.isArray(row.matching_roles) ? row.matching_roles : [],
-                classificationStatus: "verified",
-                classificationConfidence: "high",
-                skills: Array.isArray(row.skills) ? row.skills : [],
-                experienceYears: row.metadata?.experienceYears || 0,
-                experienceLevel: row.metadata?.experienceLevel || "Entry",
-                contact: {
-                  location: row.location,
-                  email: row.email,
-                  phone: row.phone,
-                  linkedin: row.linkedin,
-                  github: row.github,
-                  portfolio: row.portfolio
-                },
-                educationRecords: Array.isArray(row.education) ? row.education : [],
-                experienceRecords: Array.isArray(row.experience) ? row.experience : [],
-                projects: Array.isArray(row.projects) ? row.projects : [],
-                certifications: Array.isArray(row.certifications) ? row.certifications : [],
-                achievements: Array.isArray(row.achievements) ? row.achievements : [],
-                rawResumeText: row.raw_resume_text,
-                source: "resume_upload",
-                parserSource: row.parser_source || "gemini",
-                updatedAt: row.updated_at
-              };
-              setCandidateProfile(restoredProfile);
-              if (row.raw_resume_text) setResumeInput(row.raw_resume_text);
-              if (row.skills?.length > 0) setCandidateSkills(row.skills.join(", "));
-              if (row.matching_companies?.length > 0) {
-                setSelectedRole(row.matching_companies[0].role);
-                setSelectedCompany(row.matching_companies[0].company);
-              }
-              try {
-                localStorage.setItem(getScopedKey("yatra_candidate_profile", uid), JSON.stringify(restoredProfile));
-              } catch (_) {}
-              return;
-            }
-          }
-        } catch (netErr) {
-          console.warn("[Resume Restoration] Server query offline, falling back to user-scoped cache:", netErr);
+      if (isAuthUser) {
+        const scopedProfileKey = getScopedKey("yatra_candidate_profile", uid);
+        const cachedProfile = localStorage.getItem(scopedProfileKey);
+        if (cachedProfile) {
+          const parsed = JSON.parse(cachedProfile);
+          setCandidateProfile(parsed);
+          if (parsed.rawResumeText) setResumeInput(parsed.rawResumeText);
+          if (parsed.skills?.length > 0) setCandidateSkills(parsed.skills.join(", "));
+        } else {
+          setCandidateProfile(null);
+          setParseResult(null);
+          setResumeInput("");
         }
-      }
 
-      // 2. Fallback to user-scoped localStorage cache
-      const scopedKey = getScopedKey("yatra_candidate_profile", uid);
-      const cachedProfile = localStorage.getItem(scopedKey);
-      if (cachedProfile) {
-        const parsed = JSON.parse(cachedProfile);
-        setCandidateProfile(parsed);
-        if (parsed.rawResumeText) setResumeInput(parsed.rawResumeText);
-        if (parsed.skills?.length > 0) setCandidateSkills(parsed.skills.join(", "));
+        const scopedParseKey = getScopedKey("yatra_parse_result", uid);
+        const cachedParse = localStorage.getItem(scopedParseKey);
+        if (cachedParse) {
+          const parsed = JSON.parse(cachedParse);
+          setParseResult(parsed);
+          if (parsed.skills?.length > 0) setCandidateSkills(parsed.skills.join(", "));
+          if (parsed.matchingCompanies?.length > 0) {
+            setSelectedRole(parsed.matchingCompanies[0].role);
+            setSelectedCompany(parsed.matchingCompanies[0].company);
+          }
+        }
       } else {
-        // Enforce clean state for new or switching accounts
+        // Unauthenticated or guest: strictly clear active in-memory resume state
         setCandidateProfile(null);
         setParseResult(null);
         setResumeInput("");
-      }
-
-      const cachedParse = localStorage.getItem(getScopedKey("yatra_parse_result", uid));
-      if (cachedParse) {
-        const parsed = JSON.parse(cachedParse);
-        setParseResult(parsed);
-        if (parsed.skills?.length > 0) setCandidateSkills(parsed.skills.join(", "));
-        if (parsed.matchingCompanies?.length > 0) {
-          setSelectedRole(parsed.matchingCompanies[0].role);
-          setSelectedCompany(parsed.matchingCompanies[0].company);
-        }
       }
     } catch (_) {}
   };
@@ -274,7 +285,7 @@ export default function Home() {
   useEffect(() => {
     fetchSavedRoadmaps();
     fetchInterviewReports();
-    fetchSavedResume();
+    restoreScopedResumeCache();
 
     // Restore cached selected job across reloads
     try {
@@ -310,6 +321,7 @@ export default function Home() {
   };
 
   const handleFileClick = () => {
+    setParseError(null);
     if (isParsingResume) return;
     fileInputRef.current?.click();
   };
@@ -317,6 +329,7 @@ export default function Home() {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      setParseError(null);
       handleFileProcessing(file);
     }
     e.target.value = '';
@@ -329,6 +342,7 @@ export default function Home() {
       return;
     }
 
+    setSelectedResumeFile(file);
     setParseError(null);
 
     // Stash previous valid state in case validation or extraction fails
@@ -361,7 +375,7 @@ export default function Home() {
       return;
     }
     if (!SUPPORTED_RESUME_EXTENSIONS.has(ext)) {
-      restorePreviousOnFailure('Unsupported file format. Upload a PDF (.pdf), DOCX (.docx), plain text (.txt), or image (.png, .jpg). Legacy .doc files are not supported; save them as .docx first.');
+      restorePreviousOnFailure('Unsupported file format. Upload a PDF (.pdf), Word document (.docx, .doc), plain text (.txt), or image (.png, .jpg).');
       return;
     }
 
@@ -379,7 +393,7 @@ export default function Home() {
       };
       reader.onerror = () => restorePreviousOnFailure('The selected text file could not be read.');
       reader.readAsText(file);
-    } else if (ext === 'docx') {
+    } else if (ext === 'docx' || ext === 'doc') {
       setIsParsingResume(true);
       setParseError(null);
       setAiThinkingStep(1);
@@ -387,11 +401,11 @@ export default function Home() {
 
       const reader = new FileReader();
       reader.onerror = () => {
-        restorePreviousOnFailure("Could not read the selected DOCX file from disk.");
+        restorePreviousOnFailure("Could not read the selected Word document from disk.");
       };
       reader.onload = async (event) => {
         const abortCtrl = new AbortController();
-        const timeoutHandle = setTimeout(() => abortCtrl.abort(), 35000);
+        const timeoutHandle = setTimeout(() => abortCtrl.abort(), 60000);
         try {
           const base64 = event.target?.result as string;
           const { token } = await getAuthContext();
@@ -410,7 +424,7 @@ export default function Home() {
           const extractData = await extractRes.json();
 
           if (!extractRes.ok || !extractData.success || !extractData.text) {
-            const errMsg = extractData.error?.message || "We couldn't read the text from this DOCX file. Try uploading a PDF or pasting the resume text instead.";
+            const errMsg = extractData.error?.message || "We couldn't read the text from this Word file. Try uploading a PDF or pasting the resume text instead.";
             restorePreviousOnFailure(errMsg);
             return;
           }
@@ -423,40 +437,12 @@ export default function Home() {
           clearTimeout(timeoutHandle);
           const isTimeout = err?.name === "AbortError";
           restorePreviousOnFailure(isTimeout
-            ? "DOCX extraction timed out after 35 seconds. Please try again or paste the text."
-            : "We couldn't extract text from this DOCX. Try uploading a PDF or plain text instead.");
+            ? "Word extraction timed out. Please try again or paste the text."
+            : "We couldn't extract text from this Word file. Try uploading a PDF or plain text instead.");
         }
       };
       reader.readAsDataURL(file);
     } else if (ext === 'pdf') {
-      // 2. Validate actual binary file bytes (PDF magic bytes: %PDF -> 0x25, 0x50, 0x44, 0x46)
-      try {
-        const headerSlice = await file.slice(0, 1024).arrayBuffer();
-        const bytes = new Uint8Array(headerSlice);
-
-        let isPdfMagic = false;
-        for (let i = 0; i <= bytes.length - 4; i++) {
-          if (
-            bytes[i] === 0x25 &&     // %
-            bytes[i + 1] === 0x50 && // P
-            bytes[i + 2] === 0x44 && // D
-            bytes[i + 3] === 0x46    // F
-          ) {
-            isPdfMagic = true;
-            break;
-          }
-        }
-
-        if (!isPdfMagic) {
-          restorePreviousOnFailure("The selected file is not a valid PDF document. Please upload the original PDF file.");
-          return;
-        }
-      } catch (validationErr) {
-        restorePreviousOnFailure("The selected file is not a valid PDF document. Please upload the original PDF file.");
-        return;
-      }
-
-      // 3. Genuine PDF validation passed -> proceed with extraction flow
       setIsParsingResume(true);
       setParseError(null);
       setAiThinkingStep(1);
@@ -468,7 +454,7 @@ export default function Home() {
       };
       reader.onload = async (event) => {
         const abortCtrl = new AbortController();
-        const timeoutHandle = setTimeout(() => abortCtrl.abort(), 35000);
+        const timeoutHandle = setTimeout(() => abortCtrl.abort(), 60000);
         try {
           const base64 = event.target?.result as string;
           const { token } = await getAuthContext();
@@ -500,7 +486,7 @@ export default function Home() {
           clearTimeout(timeoutHandle);
           const isTimeout = err?.name === "AbortError";
           restorePreviousOnFailure(isTimeout
-            ? "PDF extraction timed out after 35 seconds. Please try again."
+            ? "PDF extraction timed out. Please try again."
             : "We couldn't read this PDF. Try pasting the resume text instead.");
         }
       };
@@ -642,23 +628,12 @@ export default function Home() {
     }
     setIsParsingResume(true);
     setParseError(null);
+    setAiThinkingStep(3);
+    setAiThinkingProgress("Analyzing skills, domain competencies, and role matches...");
 
-    const steps = [
-      { step: 1, text: "Extracting skills and competencies..." },
-      { step: 2, text: "Detecting domain and experience..." },
-      { step: 3, text: "Matching against role templates..." },
-      { step: 4, text: "Building your profile..." }
-    ];
-
-    steps.forEach((s, i) => {
-      setTimeout(() => {
-        setAiThinkingStep(s.step);
-        setAiThinkingProgress(s.text);
-      }, i * 200);
-    });
-
+    const tParseStart = performance.now();
     const abortController = new AbortController();
-    const timeoutHandle = setTimeout(() => abortController.abort(), 35000);
+    const timeoutHandle = setTimeout(() => abortController.abort(), 90000);
 
     try {
       const { session, uid, token } = await getAuthContext();
@@ -689,6 +664,10 @@ export default function Home() {
         throw new Error("No skills could be identified. Please verify the document has readable competencies.");
       }
 
+      const parseDurationMs = Math.round(performance.now() - tParseStart);
+      setAiThinkingStep(4);
+      setAiThinkingProgress(`Analysis complete in ${parseDurationMs}ms (${data.parser_source === 'local_deterministic' ? 'Deterministic Engine' : 'Gemini AI'}).`);
+
       // Establish single source of truth canonical profile
       const canonical = buildCanonicalProfile(data, data, textToParse);
       canonical.parserSource = data.parser_source || "gemini";
@@ -697,7 +676,7 @@ export default function Home() {
       setParseResult(data);
       setCandidateProfile(canonical);
 
-      // Save to user-scoped localStorage
+      // Save to user-scoped localStorage cache
       try {
         const scopedKey = getScopedKey("yatra_candidate_profile", uid);
         const scopedParseKey = getScopedKey("yatra_parse_result", uid);
@@ -713,22 +692,6 @@ export default function Home() {
         setSelectedCompany(data.matchingCompanies[0].company);
       }
 
-      // Persist to Supabase candidate_profiles in background if authenticated
-      if (session?.user && uid && !uid.startsWith("guest") && token) {
-        fetch("/api/resume/save", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${token}`
-          },
-          body: JSON.stringify({
-            profile: canonical,
-            rawResumeText: textToParse,
-            parserSource: data.parser_source || "gemini"
-          })
-        }).catch(err => console.warn("[Resume DB Persistence Notice]:", err));
-      }
-
     } catch (error: any) {
       clearTimeout(timeoutHandle);
       const isTimeout = error?.name === "AbortError";
@@ -740,7 +703,7 @@ export default function Home() {
         setParseResult(previousParseFallback || null);
       }
       setParseError(isTimeout
-        ? "Resume parsing timed out after 35 seconds. Please try again."
+        ? "Resume parsing timed out. Please try again."
         : (error?.message || "Resume analysis failed. Please try again."));
     } finally {
       setIsParsingResume(false);
@@ -1251,20 +1214,25 @@ export default function Home() {
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2 cursor-pointer">
               <div className="w-8 h-8 rounded-full bg-[#2563eb] flex items-center justify-center text-white text-xs font-bold">
-                ST
+                {resolvedInitials}
               </div>
-              <span className="hidden md:inline text-sm text-[#cbd5e1] font-medium">Student</span>
+              <span className="hidden md:inline text-sm text-[#cbd5e1] font-medium">{resolvedDisplayName}</span>
               <ChevronDown className="w-4 h-4 text-[#64748b] hidden md:block" />
             </div>
             <button 
               onClick={async () => {
                 try {
-                  await supabase.auth.signOut();
+                  await signOut();
                 } catch (e) {
-                  console.warn("Supabase signout skipped:", e);
+                  console.warn("Clerk signout notice:", e);
+                }
+                try {
+                  await logoutUser();
+                } catch (e) {
+                  console.warn("LogoutUser notice:", e);
                 }
                 clearUserSessionData();
-                window.location.reload();
+                window.location.href = "/";
               }}
               className="text-xs text-[#94a3b8] hover:text-red-400 transition-colors cursor-pointer ml-2"
             >
@@ -1302,7 +1270,7 @@ export default function Home() {
         type="file"
         ref={fileInputRef}
         className="hidden"
-        accept=".pdf,.PDF,.docx,.DOCX,.txt,.TXT,.md,.MD,.png,.PNG,.jpg,.JPG,.jpeg,.JPEG,.webp,.WEBP,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,image/*"
+        accept=".pdf,.PDF,.docx,.DOCX,.doc,.DOC,.txt,.TXT,.md,.MD,.png,.PNG,.jpg,.JPG,.jpeg,.JPEG,.webp,.WEBP,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword,text/plain,image/*"
         onChange={handleFileChange}
       />
 
@@ -1446,6 +1414,11 @@ export default function Home() {
                         </div>
                         <p className="text-sm font-semibold text-[#334155] mb-1">Drop your resume here or click to upload</p>
                         <p className="text-xs text-[#94a3b8]">PDF • DOCX • Image (Max 10MB)</p>
+                        {selectedResumeFile && (
+                          <p className="mt-2 text-xs font-medium text-[#2563eb] truncate max-w-full px-2">
+                            Selected: {selectedResumeFile.name}
+                          </p>
+                        )}
                       </>
                     )}
                   </div>
@@ -1465,9 +1438,19 @@ export default function Home() {
 
                   {/* Parse Error */}
                   {parseError && (
-                    <div className="mt-4 w-full bg-red-50 border border-red-200 rounded-xl p-3 text-xs text-red-700 text-left">
-                      <AlertTriangle className="w-4 h-4 text-red-500 inline mr-1.5" />
-                      {parseError}
+                    <div className="mt-4 w-full bg-red-50 border border-red-200 rounded-xl p-3 text-xs text-red-700 text-left flex items-start justify-between gap-2 shadow-sm">
+                      <div className="flex items-start gap-1.5 flex-1">
+                        <AlertTriangle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+                        <span className="leading-relaxed">{parseError}</span>
+                      </div>
+                      <button
+                        onClick={() => setParseError(null)}
+                        className="text-red-400 hover:text-red-600 p-0.5 rounded transition-colors cursor-pointer shrink-0"
+                        title="Dismiss notice"
+                        aria-label="Dismiss notice"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
                     </div>
                   )}
                 </div>
@@ -1475,7 +1458,7 @@ export default function Home() {
                 {/* Right: Dynamic Resume Intelligence Dashboard */}
                 <div className={`${parseResult ? 'lg:col-span-8' : ''}`}>
                   {(() => {
-                    const resumeIntelligencePayload: ResumeIntelligenceData | null = parseResult ? {
+                    const resumeIntelligencePayload: any = parseResult ? {
                       profile: parseResult.profile || {
                         name: parseResult.candidate_name || candidateProfile?.fullName || null,
                         headline: parseResult.headline || candidateProfile?.primaryRole || null,
@@ -1493,7 +1476,10 @@ export default function Home() {
                       education: (Array.isArray(parseResult.education) && parseResult.education.length > 0) ? parseResult.education : (candidateProfile?.educationRecords || []),
                       projects: (Array.isArray(parseResult.projects) && parseResult.projects.length > 0) ? parseResult.projects : (candidateProfile?.projects || []),
                       certifications: Array.isArray(parseResult.certifications) ? parseResult.certifications : [],
-                      achievements: Array.isArray(parseResult.achievements) ? parseResult.achievements : []
+                      achievements: Array.isArray(parseResult.achievements) ? parseResult.achievements : [],
+                      parser_source: parseResult.parser_source || candidateProfile?.parserSource || "gemini",
+                      parser_mode: parseResult.parser_mode || parseResult.parser_source || candidateProfile?.parserSource || "gemini",
+                      extraction_metadata: parseResult.extraction_metadata
                     } : null;
 
                     return (
@@ -1501,8 +1487,12 @@ export default function Home() {
                         data={resumeIntelligencePayload}
                         isLoading={isParsingResume}
                         parseError={parseError}
+                        onDismiss={() => setParseError(null)}
                         onRetry={() => {
-                          if (resumeInput) handleParseResume(resumeInput);
+                          setParseError(null);
+                          if (isParsingResume) return;
+                          if (resumeInput && resumeInput.trim()) handleParseResume(resumeInput);
+                          else if (selectedResumeFile) handleFileProcessing(selectedResumeFile);
                           else handleFileClick();
                         }}
                         onFindJobs={() => setActiveTab("live-jobs")}
@@ -1541,6 +1531,7 @@ export default function Home() {
                 candidateProfile={getCandidateProfile()}
                 onPrepareInterview={handlePrepareInterview}
                 onDirectInterview={(job) => handleDirectInterview(job, false)}
+                onVRInterview={(job) => handleDirectInterview(job, true)}
               />
             </motion.div>
           )}
@@ -1691,6 +1682,15 @@ export default function Home() {
                         )}
                       </button>
                       <button
+                        type="button"
+                        onClick={() => setIsIntelligenceModalOpen(true)}
+                        disabled={!selectedJobForInterview}
+                        className="flex-1 py-3 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-50 text-indigo-700 font-semibold text-sm rounded-xl border border-indigo-200 shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer"
+                      >
+                        <BookOpen className="w-4 h-4 text-indigo-600" />
+                        Company Intelligence
+                      </button>
+                      <button
                         onClick={() => setInterviewSubView("mode")}
                         className="flex-1 py-3 bg-white hover:bg-slate-50 text-[#334155] font-semibold text-sm rounded-xl border border-slate-200 shadow-sm hover:shadow transition-all flex items-center justify-center gap-2 cursor-pointer"
                       >
@@ -1698,6 +1698,15 @@ export default function Home() {
                         <ChevronDown className="w-4 h-4" />
                       </button>
                     </div>
+
+                    <CompanyIntelligenceModal
+                      isOpen={isIntelligenceModalOpen}
+                      onClose={() => setIsIntelligenceModalOpen(false)}
+                      job={selectedJobForInterview}
+                      candidateProfile={getCandidateProfile()}
+                      onStartDirectInterview={(targetJob) => handleDirectInterview(targetJob, false)}
+                      onStartVRInterview={(targetJob) => handleDirectInterview(targetJob, true)}
+                    />
                   </motion.div>
                 )}
 

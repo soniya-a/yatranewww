@@ -2367,7 +2367,460 @@
     "answers": {},
     "is_completed": false,
     "interview_mode": "normal",
-    "created_at": "2026-11-16T18:31:08.713Z",
-    "updated_at": "2026-11-16T18:31:08.715Z"
+    "created_at": "2026-11-17T08:53:39.213Z",
+    "updated_at": "2026-11-17T08:53:39.214Z"
+  },
+  {
+    "id": "SES_1795103511474_l3fnz",
+    "user_id": "user_3MKbVgUUlVLxxswlxbZmz19hfF9",
+    "session_token": "a6ff782cdda15cd05989e01b9c83289944de551a3e385a1e70cf376defa934a8",
+    "question_set_id": "SET_WALTERPM_ENGINEER_1795103504162",
+    "company": "",
+    "role": "",
+    "current_question_id": "Q002",
+    "current_question_order": 2,
+    "answers": {
+      "Q001": "I think we have to use the track for preparing with parcel ID"
+    },
+    "is_completed": false,
+    "interview_mode": "normal",
+    "created_at": "2026-11-19T15:56:10.102Z",
+    "updated_at": "2026-11-19T15:57:44.291Z"
+  },
+  {
+    "id": "SES_1795153614458_5wgw0",
+    "user_id": "guest",
+    "session_token": "43b14fe22bac9d8340a0cb656e59c8c0932f2a467e3535a4798389d44288cd0b",
+    "question_set_id": "SET_TECHMAHI_AIMLSOFT_1795153614360",
+    "company": "",
+    "role": "",
+    "current_question_id": "Q001",
+    "current_question_order": 1,
+    "answers": {
+      "Q001": "I implement gradient clipping and Adam optimizer with cosine decay learning rate schedules."
+    },
+    "is_completed": false,
+    "interview_mode": "normal",
+    "created_at": "2026-11-20T05:46:54.843Z",
+    "updated_at": "2026-11-20T05:46:54.843Z"
+  },
+  {
+    "id": "SES_1795154170640_rfm6x",
+    "user_id": "guest",
+    "session_token": "fd7e110f8700005a89c93600b394c85cfd6c32a874235efd29c9c70418b3e2d6",
+    "question_set_id": "SET_GOOGLE_FULLSTAC_1795154170267",
+    "company": "",
+    "role": "",
+    "current_question_id": "Q001",
+    "current_question_order": 1,
+    "answers": {
+      "Q001": "I use topological sort via Kahn algorithm with an in-degree array to detect dependency cycles."
+    },
+    "is_completed": false,
+    "interview_mode": "normal",
+    "created_at": "2026-11-20T05:56:11.319Z",
+    "updated_at": "2026-11-20T05:56:11.319Z"
+  },
+  {
+    "id": "SES_1795154347029_857q4",
+    "user_id": "guest",
+    "session_token": "051e274a60617d467712b8b52154b8b357b94f89a4e01d11434d2db3f3780347",
+    "question_set_id": "SET_GOOGLE_FULLSTAC_1795154346522",
+    "company": "",
+    "role": "",
+    "current_question_id": "Q001",
+    "current_question_order": 1,
+    "answers": {
+      "Q001": "I use topological sort via Kahn algorithm with an in-degree array to detect dependency cycles."
+    },
+    "is_completed": false,
+    "interview_mode": "normal",
+    "created_at": "2026-11-20T05:59:07.702Z",
+    "updated_at": "2026-11-20T05:59:07.702Z"
+  },
+  {
+    "id": "SES_1795154860111_32h8g",
+    "user_id": "guest",
+    "session_token": "e686cbdeb4e8e07063fea56adb75abab1397e2feb315a862703f4bf123ee403d",
+    "question_set_id": "SET_GOOGLE_FULLSTAC_1795154859835",
+    "company": "",
+    "role": "",
+    "current_question_id": "Q001",
+    "current_question_order": 1,
+    "answers": {
+      "Q001": "I use topological sort via Kahn algorithm with an in-degree array to detect dependency cycles."
+    },
+    "is_completed": false,
+    "interview_mode": "normal",
+    "created_at": "2026-11-20T06:07:41.307Z",
+    "updated_at": "2026-11-20T06:07:41.307Z"
+  },
+  {
+    "id": "SES_1795154889688_lx5i8",
+    "user_id": "guest",
+    "session_token": "b458e27e5910d3353fc84f40d83ea0e3beffc71aa6985e9befdc5553f97711e1",
+    "question_set_id": "SET_GOOGLE_FULLSTAC_1795154889109",
+    "company": "",
+    "role": "",
+    "current_question_id": "Q002",
+    "current_question_order": 2,
+    "answers": {
+      "Q001": "I have extensive experience building React and Node.js microservices with real-time WebSockets."
+    },
+    "is_completed": false,
+    "interview_mode": "normal",
+    "created_at": "2026-11-20T06:08:10.737Z",
+    "updated_at": "2026-11-20T06:08:13.470Z"
+  },
+  {
+    "id": "SES_1795155350607_rjqir",
+    "user_id": "guest",
+    "session_token": "211b364c2b5f1d7babfc32e7aed4ffc415236c71cf49980b2b5503c54a37c11c",
+    "question_set_id": "SET_TECHMAHI_AIMLSOFT_1795155350537",
+    "company": "",
+    "role": "",
+    "current_question_id": "Q001",
+    "current_question_order": 1,
+    "answers": {
+      "Q001": "I implement gradient clipping and Adam optimizer with cosine decay learning rate schedules."
+    },
+    "is_completed": false,
+    "interview_mode": "normal",
+    "created_at": "2026-11-20T06:15:50.982Z",
+    "updated_at": "2026-11-20T06:15:50.982Z"
+  },
+  {
+    "id": "SES_1795155398828_wzr5c",
+    "user_id": "guest",
+    "session_token": "8c777263c90eb2f69fce7d3377ba3ab54dcd096b40d8dd732e4435386f2ddb4d",
+    "question_set_id": "SET_TECHMAHI_AIMLSOFT_1795155398771",
+    "company": "",
+    "role": "",
+    "current_question_id": "Q001",
+    "current_question_order": 1,
+    "answers": {
+      "Q001": "I implement gradient clipping and Adam optimizer with cosine decay learning rate schedules."
+    },
+    "is_completed": false,
+    "interview_mode": "normal",
+    "created_at": "2026-11-20T06:16:39.126Z",
+    "updated_at": "2026-11-20T06:16:39.126Z"
+  },
+  {
+    "id": "SES_1795155414072_0ld6z",
+    "user_id": "guest",
+    "session_token": "d307d8a079b69ed8f5772b60adf4d07d6ffd803afdd933208dbea7bf0ae18ff5",
+    "question_set_id": "SET_GOOGLE_FULLSTAC_1795155413747",
+    "company": "",
+    "role": "",
+    "current_question_id": "Q001",
+    "current_question_order": 1,
+    "answers": {
+      "Q001": "I use topological sort via Kahn algorithm with an in-degree array to detect dependency cycles."
+    },
+    "is_completed": false,
+    "interview_mode": "normal",
+    "created_at": "2026-11-20T06:16:54.768Z",
+    "updated_at": "2026-11-20T06:16:54.768Z"
+  },
+  {
+    "id": "SES_1795155464469_aihs8",
+    "user_id": "guest",
+    "session_token": "b68f9774d86a93550383614bc74aea77d3852f38c4e5e183d4bc7537437de92c",
+    "question_set_id": "SET_GOOGLE_FULLSTAC_1795155464189",
+    "company": "",
+    "role": "",
+    "current_question_id": "Q001",
+    "current_question_order": 1,
+    "answers": {
+      "Q001": "I use topological sort via Kahn algorithm with an in-degree array to detect dependency cycles."
+    },
+    "is_completed": false,
+    "interview_mode": "normal",
+    "created_at": "2026-11-20T06:17:45.169Z",
+    "updated_at": "2026-11-20T06:17:45.169Z"
+  },
+  {
+    "id": "SES_1795155494461_yhf43",
+    "user_id": "guest",
+    "session_token": "ca9d5e57b7592dbefa586d61765be4438c4f5cd3fba452bf726af81d509cd92b",
+    "question_set_id": "SET_TECHMAHI_AIMLSOFT_1795155494355",
+    "company": "",
+    "role": "",
+    "current_question_id": "Q001",
+    "current_question_order": 1,
+    "answers": {
+      "Q001": "I implement gradient clipping and Adam optimizer with cosine decay learning rate schedules."
+    },
+    "is_completed": false,
+    "interview_mode": "normal",
+    "created_at": "2026-11-20T06:18:14.756Z",
+    "updated_at": "2026-11-20T06:18:14.756Z"
+  },
+  {
+    "id": "SES_1795364733750_5h2tn",
+    "user_id": "user_3MTBFOxeOuczspqvPcQM3zYiCNt",
+    "session_token": "406f013a82217f57d5751f97625594cd217a10669b412e89ee296a3d95ee4375",
+    "question_set_id": "SET_ATKINSRA_APPRENTI_1795364725545",
+    "company": "",
+    "role": "",
+    "current_question_id": "Q004",
+    "current_question_order": 4,
+    "answers": {
+      "Q001": "this is I don't know about this exactly",
+      "Q002": "Mera Veraval you can see I selected",
+      "Q003": "okay profile I am in a PDF did Parth is the same exactly the"
+    },
+    "is_completed": false,
+    "interview_mode": "normal",
+    "created_at": "2026-11-22T16:27:04.473Z",
+    "updated_at": "2026-11-22T16:30:21.906Z"
+  },
+  {
+    "id": "SES_1795396225659_xhlj5",
+    "user_id": "user_3MTBFOxeOuczspqvPcQM3zYiCNt",
+    "session_token": "7eda2a3a5e354a325cfa1b05ea247fe60ba8dbc8b428053ab23453e0ccfbfbf1",
+    "question_set_id": "SET_WALTERPM_ENGINEER_1795396220318",
+    "company": "",
+    "role": "",
+    "current_question_id": "Q010",
+    "current_question_order": 10,
+    "answers": {
+      "Q001": "i dony mp",
+      "Q002": "next",
+      "Q003": "noo",
+      "Q004": "dont no",
+      "Q005": "no",
+      "Q006": "Engineering at Walter P Moore. How do you evaluate load paths and compute bending moments and sheer forces for a continuous reinforced concrete beam under both dead and live loads according to When utilizing finite element analysis and structural modeling tools likes to DOT, PRO or ATABS, how do you verify boundary conditions, model rigid diaphragms, and interpret modal analysis results for seismic lateral forces?",
+      "Q007": "Engineering at Walter P Moore. How do you evaluate lohinnad paths and compute bending moments and sheer forces for a continuous reinforced concrete beam under both dead and live loads according to When utilizing finite element analysis and structural modeling tools likes to DOT, PRO or ATABS, how do you verify boundary conditions, model rigid diaphragms, and interpret modal analysis results for seismic lateral forces?",
+      "Q008": "no",
+      "Q009": "mm",
+      "Q010": "mm",
+      "Q011": "mmm"
+    },
+    "is_completed": true,
+    "interview_mode": "normal",
+    "created_at": "2026-11-23T01:11:24.588Z",
+    "updated_at": "2026-11-23T01:17:24.352Z"
+  },
+  {
+    "id": "SES_1795397137197_uuevw",
+    "user_id": "user_3MTBFOxeOuczspqvPcQM3zYiCNt",
+    "session_token": "24a15222e778e684706fe5f605a4f1cc3ec5cde3eaea47db622bca2f31ddc0ee",
+    "question_set_id": "SET_BURNSMCD_TRAINEEE_1795397137001",
+    "company": "",
+    "role": "",
+    "current_question_id": "Q009",
+    "current_question_order": 9,
+    "answers": {
+      "Q001": "I think the question is about EC related stuff. Why are you asking me AIML stuff?",
+      "Q002": "I think you are asking totally about a IML, but this is Electro descent communication engineering electric system fundamentals. You need to ask the question. Got it.",
+      "Q003": "Done now.",
+      "Q004": "nothing",
+      "Q005": "sorry",
+      "Q006": "no",
+      "Q007": "noo",
+      "Q008": "no",
+      "Q009": "kk"
+    },
+    "is_completed": true,
+    "interview_mode": "normal",
+    "created_at": "2026-11-23T01:26:14.412Z",
+    "updated_at": "2026-11-23T01:29:05.027Z"
+  },
+  {
+    "id": "SES_1795399319209_4p8tc",
+    "user_id": "guest",
+    "session_token": "d5fb19fcfbf1bb909d054ecc53c63e376823c43befe481961d0d2d5e19f57df3",
+    "question_set_id": "SET_BURNSMCD_TRAINEEE_1795399313443",
+    "company": "",
+    "role": "",
+    "current_question_id": "Q009",
+    "current_question_order": 9,
+    "answers": {
+      "Q001": "In high-voltage T&D power systems, we use Ferranti effect shunt reactors, Surge Impedance Loading (SIL), differential and distance relays on Single-Line Diagrams (SLDs), Dyn11 transformers, SF6/Vacuum circuit breakers, and IEEE 80 substation earthing grids with LOTO safety.",
+      "Q002": "In high-voltage T&D power systems, we use Ferranti effect shunt reactors, Surge Impedance Loading (SIL), differential and distance relays on Single-Line Diagrams (SLDs), Dyn11 transformers, SF6/Vacuum circuit breakers, and IEEE 80 substation earthing grids with LOTO safety.",
+      "Q003": "In high-voltage T&D power systems, we use Ferranti effect shunt reactors, Surge Impedance Loading (SIL), differential and distance relays on Single-Line Diagrams (SLDs), Dyn11 transformers, SF6/Vacuum circuit breakers, and IEEE 80 substation earthing grids with LOTO safety.",
+      "Q004": "In high-voltage T&D power systems, we use Ferranti effect shunt reactors, Surge Impedance Loading (SIL), differential and distance relays on Single-Line Diagrams (SLDs), Dyn11 transformers, SF6/Vacuum circuit breakers, and IEEE 80 substation earthing grids with LOTO safety.",
+      "Q005": "In high-voltage T&D power systems, we use Ferranti effect shunt reactors, Surge Impedance Loading (SIL), differential and distance relays on Single-Line Diagrams (SLDs), Dyn11 transformers, SF6/Vacuum circuit breakers, and IEEE 80 substation earthing grids with LOTO safety.",
+      "Q006": "In high-voltage T&D power systems, we use Ferranti effect shunt reactors, Surge Impedance Loading (SIL), differential and distance relays on Single-Line Diagrams (SLDs), Dyn11 transformers, SF6/Vacuum circuit breakers, and IEEE 80 substation earthing grids with LOTO safety.",
+      "Q007": "In high-voltage T&D power systems, we use Ferranti effect shunt reactors, Surge Impedance Loading (SIL), differential and distance relays on Single-Line Diagrams (SLDs), Dyn11 transformers, SF6/Vacuum circuit breakers, and IEEE 80 substation earthing grids with LOTO safety.",
+      "Q008": "In high-voltage T&D power systems, we use Ferranti effect shunt reactors, Surge Impedance Loading (SIL), differential and distance relays on Single-Line Diagrams (SLDs), Dyn11 transformers, SF6/Vacuum circuit breakers, and IEEE 80 substation earthing grids with LOTO safety.",
+      "Q009": "In high-voltage T&D power systems, we use Ferranti effect shunt reactors, Surge Impedance Loading (SIL), differential and distance relays on Single-Line Diagrams (SLDs), Dyn11 transformers, SF6/Vacuum circuit breakers, and IEEE 80 substation earthing grids with LOTO safety."
+    },
+    "is_completed": true,
+    "interview_mode": "normal",
+    "created_at": "2026-11-23T02:01:59.932Z",
+    "updated_at": "2026-11-23T02:02:03.891Z"
+  },
+  {
+    "id": "SES_1795399532798_o3jcy",
+    "user_id": "guest",
+    "session_token": "78147bfbcdd65504563d70f30be9df0f50e74cade66897fcd066c0f137537924",
+    "question_set_id": "SET_BURNSMCD_TRAINEEE_1795399526634",
+    "company": "",
+    "role": "",
+    "current_question_id": "Q009",
+    "current_question_order": 9,
+    "answers": {
+      "Q001": "In high-voltage T&D power systems, we use Ferranti effect shunt reactors, Surge Impedance Loading (SIL), differential and distance relays on Single-Line Diagrams (SLDs), Dyn11 transformers, SF6/Vacuum circuit breakers, and IEEE 80 substation earthing grids with LOTO safety.",
+      "Q002": "In high-voltage T&D power systems, we use Ferranti effect shunt reactors, Surge Impedance Loading (SIL), differential and distance relays on Single-Line Diagrams (SLDs), Dyn11 transformers, SF6/Vacuum circuit breakers, and IEEE 80 substation earthing grids with LOTO safety.",
+      "Q003": "In high-voltage T&D power systems, we use Ferranti effect shunt reactors, Surge Impedance Loading (SIL), differential and distance relays on Single-Line Diagrams (SLDs), Dyn11 transformers, SF6/Vacuum circuit breakers, and IEEE 80 substation earthing grids with LOTO safety.",
+      "Q004": "In high-voltage T&D power systems, we use Ferranti effect shunt reactors, Surge Impedance Loading (SIL), differential and distance relays on Single-Line Diagrams (SLDs), Dyn11 transformers, SF6/Vacuum circuit breakers, and IEEE 80 substation earthing grids with LOTO safety.",
+      "Q005": "In high-voltage T&D power systems, we use Ferranti effect shunt reactors, Surge Impedance Loading (SIL), differential and distance relays on Single-Line Diagrams (SLDs), Dyn11 transformers, SF6/Vacuum circuit breakers, and IEEE 80 substation earthing grids with LOTO safety.",
+      "Q006": "In high-voltage T&D power systems, we use Ferranti effect shunt reactors, Surge Impedance Loading (SIL), differential and distance relays on Single-Line Diagrams (SLDs), Dyn11 transformers, SF6/Vacuum circuit breakers, and IEEE 80 substation earthing grids with LOTO safety.",
+      "Q007": "In high-voltage T&D power systems, we use Ferranti effect shunt reactors, Surge Impedance Loading (SIL), differential and distance relays on Single-Line Diagrams (SLDs), Dyn11 transformers, SF6/Vacuum circuit breakers, and IEEE 80 substation earthing grids with LOTO safety.",
+      "Q008": "In high-voltage T&D power systems, we use Ferranti effect shunt reactors, Surge Impedance Loading (SIL), differential and distance relays on Single-Line Diagrams (SLDs), Dyn11 transformers, SF6/Vacuum circuit breakers, and IEEE 80 substation earthing grids with LOTO safety.",
+      "Q009": "In high-voltage T&D power systems, we use Ferranti effect shunt reactors, Surge Impedance Loading (SIL), differential and distance relays on Single-Line Diagrams (SLDs), Dyn11 transformers, SF6/Vacuum circuit breakers, and IEEE 80 substation earthing grids with LOTO safety."
+    },
+    "is_completed": true,
+    "interview_mode": "normal",
+    "created_at": "2026-11-23T02:05:33.693Z",
+    "updated_at": "2026-11-23T02:18:57.068Z"
+  },
+  {
+    "id": "SES_1795413315160_ubw4e",
+    "user_id": "guest",
+    "session_token": "f57eacd5319794644030e19b11cf4c440dd0da176a5ff0591f10ac221f438371",
+    "question_set_id": "SET_BURNSMCD_TRAINEEE_1795413306998",
+    "company": "",
+    "role": "",
+    "current_question_id": "Q009",
+    "current_question_order": 9,
+    "answers": {
+      "Q001": "In high-voltage T&D power systems, we use Ferranti effect shunt reactors, Surge Impedance Loading (SIL), differential and distance relays on Single-Line Diagrams (SLDs), Dyn11 transformers, SF6/Vacuum circuit breakers, and IEEE 80 substation earthing grids with LOTO safety.",
+      "Q002": "In high-voltage T&D power systems, we use Ferranti effect shunt reactors, Surge Impedance Loading (SIL), differential and distance relays on Single-Line Diagrams (SLDs), Dyn11 transformers, SF6/Vacuum circuit breakers, and IEEE 80 substation earthing grids with LOTO safety.",
+      "Q003": "In high-voltage T&D power systems, we use Ferranti effect shunt reactors, Surge Impedance Loading (SIL), differential and distance relays on Single-Line Diagrams (SLDs), Dyn11 transformers, SF6/Vacuum circuit breakers, and IEEE 80 substation earthing grids with LOTO safety.",
+      "Q004": "In high-voltage T&D power systems, we use Ferranti effect shunt reactors, Surge Impedance Loading (SIL), differential and distance relays on Single-Line Diagrams (SLDs), Dyn11 transformers, SF6/Vacuum circuit breakers, and IEEE 80 substation earthing grids with LOTO safety.",
+      "Q005": "In high-voltage T&D power systems, we use Ferranti effect shunt reactors, Surge Impedance Loading (SIL), differential and distance relays on Single-Line Diagrams (SLDs), Dyn11 transformers, SF6/Vacuum circuit breakers, and IEEE 80 substation earthing grids with LOTO safety.",
+      "Q006": "In high-voltage T&D power systems, we use Ferranti effect shunt reactors, Surge Impedance Loading (SIL), differential and distance relays on Single-Line Diagrams (SLDs), Dyn11 transformers, SF6/Vacuum circuit breakers, and IEEE 80 substation earthing grids with LOTO safety.",
+      "Q007": "In high-voltage T&D power systems, we use Ferranti effect shunt reactors, Surge Impedance Loading (SIL), differential and distance relays on Single-Line Diagrams (SLDs), Dyn11 transformers, SF6/Vacuum circuit breakers, and IEEE 80 substation earthing grids with LOTO safety.",
+      "Q008": "In high-voltage T&D power systems, we use Ferranti effect shunt reactors, Surge Impedance Loading (SIL), differential and distance relays on Single-Line Diagrams (SLDs), Dyn11 transformers, SF6/Vacuum circuit breakers, and IEEE 80 substation earthing grids with LOTO safety.",
+      "Q009": "In high-voltage T&D power systems, we use Ferranti effect shunt reactors, Surge Impedance Loading (SIL), differential and distance relays on Single-Line Diagrams (SLDs), Dyn11 transformers, SF6/Vacuum circuit breakers, and IEEE 80 substation earthing grids with LOTO safety."
+    },
+    "is_completed": true,
+    "interview_mode": "normal",
+    "created_at": "2026-11-23T05:55:17.206Z",
+    "updated_at": "2026-11-23T05:55:36.245Z"
+  },
+  {
+    "id": "SES_1795413450253_bqmt3",
+    "user_id": "guest",
+    "session_token": "30a60744d23bf6dbe05f97cef2609bdc74990f2a627af622645e03ca1ff45e0f",
+    "question_set_id": "SET_BURNSMCD_TRAINEEE_1795413440813",
+    "company": "",
+    "role": "",
+    "current_question_id": "Q008",
+    "current_question_order": 8,
+    "answers": {
+      "Q001": "In high-voltage T&D power systems, we use Ferranti effect shunt reactors, Surge Impedance Loading (SIL), differential and distance relays on Single-Line Diagrams (SLDs), Dyn11 transformers, SF6/Vacuum circuit breakers, and IEEE 80 substation earthing grids with LOTO safety.",
+      "Q002": "In high-voltage T&D power systems, we use Ferranti effect shunt reactors, Surge Impedance Loading (SIL), differential and distance relays on Single-Line Diagrams (SLDs), Dyn11 transformers, SF6/Vacuum circuit breakers, and IEEE 80 substation earthing grids with LOTO safety.",
+      "Q003": "In high-voltage T&D power systems, we use Ferranti effect shunt reactors, Surge Impedance Loading (SIL), differential and distance relays on Single-Line Diagrams (SLDs), Dyn11 transformers, SF6/Vacuum circuit breakers, and IEEE 80 substation earthing grids with LOTO safety.",
+      "Q004": "In high-voltage T&D power systems, we use Ferranti effect shunt reactors, Surge Impedance Loading (SIL), differential and distance relays on Single-Line Diagrams (SLDs), Dyn11 transformers, SF6/Vacuum circuit breakers, and IEEE 80 substation earthing grids with LOTO safety.",
+      "Q005": "In high-voltage T&D power systems, we use Ferranti effect shunt reactors, Surge Impedance Loading (SIL), differential and distance relays on Single-Line Diagrams (SLDs), Dyn11 transformers, SF6/Vacuum circuit breakers, and IEEE 80 substation earthing grids with LOTO safety.",
+      "Q006": "In high-voltage T&D power systems, we use Ferranti effect shunt reactors, Surge Impedance Loading (SIL), differential and distance relays on Single-Line Diagrams (SLDs), Dyn11 transformers, SF6/Vacuum circuit breakers, and IEEE 80 substation earthing grids with LOTO safety.",
+      "Q007": "In high-voltage T&D power systems, we use Ferranti effect shunt reactors, Surge Impedance Loading (SIL), differential and distance relays on Single-Line Diagrams (SLDs), Dyn11 transformers, SF6/Vacuum circuit breakers, and IEEE 80 substation earthing grids with LOTO safety.",
+      "Q008": "In high-voltage T&D power systems, we use Ferranti effect shunt reactors, Surge Impedance Loading (SIL), differential and distance relays on Single-Line Diagrams (SLDs), Dyn11 transformers, SF6/Vacuum circuit breakers, and IEEE 80 substation earthing grids with LOTO safety."
+    },
+    "is_completed": true,
+    "interview_mode": "normal",
+    "created_at": "2026-11-23T05:57:30.963Z",
+    "updated_at": "2026-11-23T05:57:32.279Z"
+  },
+  {
+    "id": "SES_1795413767670_a6fmt",
+    "user_id": "guest",
+    "session_token": "1568ce5176159fdfb9cca7417e17d8e522982439a739f1ba74a4892665e8f548",
+    "question_set_id": "SET_BURNSMCD_TRAINEEE_1795413756289",
+    "company": "",
+    "role": "",
+    "current_question_id": "Q009",
+    "current_question_order": 9,
+    "answers": {
+      "Q001": "In high-voltage T&D power systems, we use Ferranti effect shunt reactors, Surge Impedance Loading (SIL), differential and distance relays on Single-Line Diagrams (SLDs), Dyn11 transformers, SF6/Vacuum circuit breakers, and IEEE 80 substation earthing grids with LOTO safety.",
+      "Q002": "In high-voltage T&D power systems, we use Ferranti effect shunt reactors, Surge Impedance Loading (SIL), differential and distance relays on Single-Line Diagrams (SLDs), Dyn11 transformers, SF6/Vacuum circuit breakers, and IEEE 80 substation earthing grids with LOTO safety.",
+      "Q003": "In high-voltage T&D power systems, we use Ferranti effect shunt reactors, Surge Impedance Loading (SIL), differential and distance relays on Single-Line Diagrams (SLDs), Dyn11 transformers, SF6/Vacuum circuit breakers, and IEEE 80 substation earthing grids with LOTO safety.",
+      "Q004": "In high-voltage T&D power systems, we use Ferranti effect shunt reactors, Surge Impedance Loading (SIL), differential and distance relays on Single-Line Diagrams (SLDs), Dyn11 transformers, SF6/Vacuum circuit breakers, and IEEE 80 substation earthing grids with LOTO safety.",
+      "Q005": "In high-voltage T&D power systems, we use Ferranti effect shunt reactors, Surge Impedance Loading (SIL), differential and distance relays on Single-Line Diagrams (SLDs), Dyn11 transformers, SF6/Vacuum circuit breakers, and IEEE 80 substation earthing grids with LOTO safety.",
+      "Q006": "In high-voltage T&D power systems, we use Ferranti effect shunt reactors, Surge Impedance Loading (SIL), differential and distance relays on Single-Line Diagrams (SLDs), Dyn11 transformers, SF6/Vacuum circuit breakers, and IEEE 80 substation earthing grids with LOTO safety.",
+      "Q007": "In high-voltage T&D power systems, we use Ferranti effect shunt reactors, Surge Impedance Loading (SIL), differential and distance relays on Single-Line Diagrams (SLDs), Dyn11 transformers, SF6/Vacuum circuit breakers, and IEEE 80 substation earthing grids with LOTO safety.",
+      "Q008": "In high-voltage T&D power systems, we use Ferranti effect shunt reactors, Surge Impedance Loading (SIL), differential and distance relays on Single-Line Diagrams (SLDs), Dyn11 transformers, SF6/Vacuum circuit breakers, and IEEE 80 substation earthing grids with LOTO safety.",
+      "Q009": "In high-voltage T&D power systems, we use Ferranti effect shunt reactors, Surge Impedance Loading (SIL), differential and distance relays on Single-Line Diagrams (SLDs), Dyn11 transformers, SF6/Vacuum circuit breakers, and IEEE 80 substation earthing grids with LOTO safety."
+    },
+    "is_completed": true,
+    "interview_mode": "normal",
+    "created_at": "2026-11-23T06:02:48.337Z",
+    "updated_at": "2026-11-23T06:02:49.886Z"
+  },
+  {
+    "id": "SES_1795414818488_akk7v",
+    "user_id": "user_3MTBFOxeOuczspqvPcQM3zYiCNt",
+    "session_token": "573faecef18276e71873ee8e02f9260c8749ccb9800d3257c3e95f62d588fb34",
+    "question_set_id": "SET_WALTERPM_ENGINEER_1795414804614",
+    "company": "",
+    "role": "",
+    "current_question_id": "Q010",
+    "current_question_order": 10,
+    "answers": {
+      "Q001": "Got it. Like I don't know or something else?",
+      "Q002": "no yaaa\\",
+      "Q003": "kkk",
+      "Q004": "jnhjnjn",
+      "Q005": "oooo",
+      "Q006": "kkkkk",
+      "Q007": "llkkk",
+      "Q008": "jijkljkljkl",
+      "Q009": "oolkkm",
+      "Q010": "polii",
+      "Q011": "Tell me about a project.ll"
+    },
+    "is_completed": true,
+    "interview_mode": "normal",
+    "created_at": "2026-11-23T06:23:13.351Z",
+    "updated_at": "2026-11-23T06:28:30.947Z"
+  },
+  {
+    "id": "SES_1795415818336_0oo6p",
+    "user_id": "user_3MTBFOxeOuczspqvPcQM3zYiCNt",
+    "session_token": "2f494daad25cbae81e3f9918fd93f3aa211ee09813ee4fc9d547ca20a6d38e0e",
+    "question_set_id": "SET_VYOMIC_SENIORFP_1795415818119",
+    "company": "",
+    "role": "",
+    "current_question_id": "Q010",
+    "current_question_order": 10,
+    "answers": {
+      "Q001": "kjnknmkl",
+      "Q002": "Is that? Is dead.",
+      "Q003": "Kyun nahi AA raha Hoon yadi toh actually Chinese sonu naanu.",
+      "Q004": "You know, role model or virtual reamkmkmkllity interview.",
+      "Q005": "km",
+      "Q006": "kijoimkiphjbhj But Ek predicted alarm Hai predicted.",
+      "Q007": "kpopp",
+      "Q008": "yuhuyhuih",
+      "Q009": "bhhjbnkjn",
+      "Q010": "nknkjnkjn",
+      "Q011": "nijoijip"
+    },
+    "is_completed": true,
+    "interview_mode": "normal",
+    "created_at": "2026-11-23T06:38:07.063Z",
+    "updated_at": "2026-11-23T06:41:44.867Z"
+  },
+  {
+    "id": "SES_1795420504264_oe40b",
+    "user_id": "user_3MTBFOxeOuczspqvPcQM3zYiCNt",
+    "session_token": "65e1c628081371def836855dee43976daac168b41f1d206f125debb03bc99986",
+    "question_set_id": "SET_VYOMIC_SENIORFP_1795420495227",
+    "company": "",
+    "role": "",
+    "current_question_id": "Q002",
+    "current_question_order": 2,
+    "answers": {
+      "Q001": "uyugiugiuii"
+    },
+    "is_completed": false,
+    "interview_mode": "normal",
+    "created_at": "2026-11-23T07:55:58.820Z",
+    "updated_at": "2026-11-23T07:56:05.179Z"
   }
 ]

@@ -17,7 +17,7 @@ const supabaseUrl = getEnvVar('SUPABASE_URL');
 const supabaseKey = getEnvVar('SUPABASE_SERVICE_ROLE_KEY') || getEnvVar('SUPABASE_PUBLISHABLE_KEY');
 
 export const isSupabaseConfigured = Boolean(
-  supabaseUrl && supabaseUrl.trim() !== '' && !supabaseUrl.includes('placeholder') &&
+  supabaseUrl && supabaseUrl.trim() !== '' && !supabaseUrl.includes('placeholder') && !supabaseUrl.includes('vimllthildskrgkjpwdv') &&
   supabaseKey && supabaseKey.trim() !== '' && !supabaseKey.includes('placeholder')
 );
 

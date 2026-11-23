@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import { Job } from "../lib/jobs/types";
 import { EnrichedJob, determinePrimaryTargetRole, enrichJobsWithMatching } from "../lib/jobs/liveJobMatcher";
 import { CandidateProfile, deriveJobSearchContext, computeSearchContextKey } from "../types/candidateProfile";
+import { CompanyIntelligenceModal } from "./interview/CompanyIntelligenceModal";
 import { 
   Briefcase, 
   MapPin, 
@@ -22,7 +23,8 @@ import {
   ArrowUpDown,
   Filter,
   Check,
-  Award
+  Award,
+  BookOpen
 } from "lucide-react";
 
 interface SearchResponse {
@@ -40,9 +42,11 @@ export interface LiveJobsViewProps {
   candidateProfile?: CandidateProfile;
   onPrepareInterview?: (job: EnrichedJob) => void;
   onDirectInterview?: (job: EnrichedJob) => void;
+  onVRInterview?: (job: EnrichedJob) => void;
 }
 
-export const LiveJobsView: React.FC<LiveJobsViewProps> = ({ candidateProfile, onPrepareInterview, onDirectInterview }) => {
+export const LiveJobsView: React.FC<LiveJobsViewProps> = ({ candidateProfile, onPrepareInterview, onDirectInterview, onVRInterview }) => {
+  const [selectedJobForIntelligence, setSelectedJobForIntelligence] = useState<EnrichedJob | null>(null);
   // Infer initial role query if candidate profile is present
   const defaultQuery = useMemo(() => {
     if (candidateProfile) {
@@ -641,7 +645,17 @@ export const LiveJobsView: React.FC<LiveJobsViewProps> = ({ candidateProfile, on
                     <span>Posted: {formatDate(job.postedAt)}</span>
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedJobForIntelligence(job)}
+                      className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-bold text-xs transition-all shadow-xs cursor-pointer active:scale-95"
+                      title="Inspect company-specific interview rounds, reported questions, and branch practice questions"
+                    >
+                      <BookOpen className="w-3.5 h-3.5 text-indigo-600" />
+                      Company Intelligence
+                    </button>
+
                     {onDirectInterview && (
                       <button
                         onClick={() => onDirectInterview(job)}
@@ -680,6 +694,22 @@ export const LiveJobsView: React.FC<LiveJobsViewProps> = ({ candidateProfile, on
           })}
         </div>
       )}
+
+      {/* Company Intelligence Modal */}
+      <CompanyIntelligenceModal
+        isOpen={Boolean(selectedJobForIntelligence)}
+        onClose={() => setSelectedJobForIntelligence(null)}
+        job={selectedJobForIntelligence}
+        candidateProfile={candidateProfile}
+        onStartDirectInterview={(targetJob) => {
+          if (onDirectInterview) onDirectInterview(targetJob);
+          else if (onPrepareInterview) onPrepareInterview(targetJob);
+        }}
+        onStartVRInterview={(targetJob) => {
+          if (onVRInterview) onVRInterview(targetJob);
+          else if (onDirectInterview) onDirectInterview(targetJob);
+        }}
+      />
 
       {/* Empty State */}
       {!loading && hasSearched && displayJobs.length === 0 && !error && (

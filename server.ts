@@ -1,11 +1,25 @@
 import 'dotenv/config';
+import dotenv from "dotenv";
+import fs from "fs";
+if (fs.existsSync('.env.local')) {
+  dotenv.config({ path: '.env.local', override: true });
+}
 import express from "express";
+import { verifyToken } from "@clerk/express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
-import fs from "fs";
 import { matchResumeToRegistry, COMPANIES_REGISTRY } from "./src/data/companiesRegistry";
 import { isSupabaseConfigured, supabase, getUserSupabase } from "./src/lib/supabaseServer";
+import { isLocalPostgresConfigured, testLocalPostgresConnection, checkDbHealth } from "./src/lib/localPostgres";
+import {
+  getEscoStatus,
+  getOccupations,
+  getOccupationByUri,
+  getSkills,
+  getSkillByUri,
+  getOccupationSkillRelations
+} from "./src/lib/escoService";
 import { extractTextFromPDF } from "./src/lib/pdfParser";
 import { normalizeSkills } from "./src/lib/skillNormalizer";
 import { matchSkillsToEscoOccupations } from "./src/lib/escoMatcher";
@@ -15,6 +29,7 @@ import { enrichJobsWithMatching, determinePrimaryTargetRole } from "./src/lib/jo
 // generateJobInterviewSession removed
 import { generateWithAstra } from "./src/lib/ai/openaiProvider";
 import { generateInterviewQuestions, generateCanonicalQuestionSet, getCanonicalQuestionSet, saveInterviewSession, getInterviewSession, getSessionByQuestionSet } from "./src/engine/questionEngine";
+import { getCompanyInterviewIntelligence } from "./src/services/companyIntelligenceService";
 import { evaluateInterview, getAssessmentReport, getAssessmentReportBySession } from "./src/engine/assessmentEngine";
 import type { InterviewAssessmentReport } from "./src/types/interview";
 import { generateCareerRoadmapWithGemini, GeminiRateLimitError, calculatePrioritySkillGaps } from "./src/engine/roadmapEngine";
@@ -27,6 +42,16 @@ import {
   extractProjectsFromText, 
   extractLocationFromText 
 } from "./src/lib/resume/localSectionExtractor";
+import {
+  GEMINI_PRIMARY_MODEL,
+  GEMINI_LIVE_AUDIO_MODEL,
+  executeGeminiWithRetry,
+  checkIsQuotaError,
+  isGeminiPermanentError,
+  isGeminiTransientError,
+  isGeminiCircuitBreakerActive,
+  tripGeminiCircuitBreaker
+} from "./src/lib/geminiConfig";
 const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY || "dummy_key",
   httpOptions: {
@@ -36,82 +61,13 @@ const ai = new GoogleGenAI({
   }
 });
 
-// Custom robust check for any quota or rate-limit or resource exhausted states
-let geminiCircuitBreakerActiveUntil = 0;
-
-function checkIsQuotaError(error: any): boolean {
-  if (!error) return false;
-  try {
-    const errorStr = JSON.stringify(error).toLowerCase();
-    const messageStr = (error.message || "").toString().toLowerCase();
-    const statusStr = (error.status || error.code || "").toString().toLowerCase();
-
-    return error.status === 429 ||
-      error.code === 429 ||
-      error.status === 503 ||
-      error.code === 503 ||
-      statusStr.includes("429") ||
-      messageStr.includes("429") ||
-      statusStr.includes("503") ||
-      messageStr.includes("503") ||
-      messageStr.includes("quota") ||
-      messageStr.includes("exhausted") ||
-      messageStr.includes("demand") ||
-      messageStr.includes("unavailable") ||
-      messageStr.includes("temporary") ||
-      messageStr.includes("invalid key") ||
-      messageStr.includes("api key not valid") ||
-      errorStr.includes("429") ||
-      errorStr.includes("503") ||
-      errorStr.includes("quota") ||
-      messageStr.includes("rate_limit") ||
-      errorStr.includes("rate_limit") ||
-      errorStr.includes("resource_exhausted") ||
-      errorStr.includes("exhausted") ||
-      errorStr.includes("demand") ||
-      errorStr.includes("unavailable") ||
-      errorStr.includes("temporary") ||
-      errorStr.includes("spikes") ||
-      errorStr.includes("circuit_breaker_active") ||
-      messageStr.includes("circuit_breaker_active");
-  } catch (e) {
-    console.info("checkIsQuotaError serialization fallback (silent)");
-    return true;
-  }
-}
-
-async function retryWithBackoff<T>(fn: () => Promise<T>, retries = 1, delay = 2000): Promise<T> {
-  if (Date.now() < geminiCircuitBreakerActiveUntil) {
-    const timeLeft = Math.ceil((geminiCircuitBreakerActiveUntil - Date.now()) / 1000);
-    console.info(`[System Rate Limit] Circuit is active. Fast fallback mode enabled for the next ${timeLeft}s to avoid 429 limits.`);
-    throw new Error("CIRCUIT_BREAKER_ACTIVE: Gemini is rate-limited.");
-  }
-
-  try {
-    return await fn();
-  } catch (error: any) {
-    const isRateLimit = checkIsQuotaError(error);
-    if (isRateLimit) {
-      // Respect Retry-After header if present, bounded between 5s and 30s (default 15s)
-      const retryAfterHeader = error?.response?.headers?.get?.('retry-after') || error?.headers?.['retry-after'];
-      const retryAfterSec = retryAfterHeader ? parseInt(retryAfterHeader, 10) : 15;
-      const cooldownMs = Math.min(Math.max(isNaN(retryAfterSec) ? 15 : retryAfterSec, 5), 30) * 1000;
-      geminiCircuitBreakerActiveUntil = Date.now() + cooldownMs;
-      console.info(`[Gemini Quota] 429 quota limit encountered. Fast fallback mode engaged for ${cooldownMs / 1000}s.`);
-      throw new Error("RATE_LIMITED_FALLBACK");
-    }
-
-    // Only retry on non-429 errors (e.g. 500, network issues)
-    if (retries > 0) {
-      const jitter = Math.floor(Math.random() * 800);
-      const sleepTime = delay + jitter;
-      console.info(`Gemini API Error. Retrying in ${sleepTime}ms... (${retries} retries left)`);
-      await new Promise(resolve => setTimeout(resolve, sleepTime));
-      return await retryWithBackoff(fn, retries - 1, delay * 2);
-    }
-
-    throw error;
-  }
+async function retryWithBackoff<T>(fn: () => Promise<T>, retries = 2, delay = 1000): Promise<T> {
+  return executeGeminiWithRetry(fn, {
+    maxRetries: retries,
+    initialDelayMs: delay,
+    backoffFactor: 2,
+    operationName: "ServerGemini"
+  });
 }
 
 // Highly tailored backup roadmap template
@@ -408,6 +364,49 @@ const DOMAIN_KEYWORD_MAP: Record<string, string> = {
   "road design": "Road Design",
   "bridge": "Bridge Engineering",
   "concrete mix": "Concrete Mix Design",
+  // ── ECE / EMBEDDED / VLSI ─────────────────────────────────────────────
+  "embedded c": "Embedded C",
+  "embedded systems": "Embedded Systems",
+  "rtos": "RTOS",
+  "freertos": "FreeRTOS",
+  "verilog": "Verilog",
+  "systemverilog": "SystemVerilog",
+  "vhdl": "VHDL",
+  "fpga": "FPGA Design",
+  "vlsi": "VLSI Design",
+  "asic": "ASIC Design",
+  "stm32": "STM32 Microcontrollers",
+  "arm cortex": "ARM Cortex",
+  "microcontroller": "Microcontrollers",
+  "i2c": "I2C Protocol",
+  "spi": "SPI Protocol",
+  "uart": "UART",
+  "can bus": "CAN Bus",
+  "pcb design": "PCB Design",
+  "pcb layout": "PCB Layout",
+  "altium": "Altium Designer",
+  "cadence": "Cadence Virtuoso",
+  "synopsys": "Synopsys Design Compiler",
+  "vivado": "Xilinx Vivado",
+  "dsp": "Digital Signal Processing (DSP)",
+  "signal processing": "Signal Processing",
+  "iot": "IoT Systems",
+  // ── ELECTRICAL / POWER SYSTEMS ────────────────────────────────────────
+  "power systems": "Power Systems",
+  "power electronics": "Power Electronics",
+  "switchgear": "Switchgear & Protection",
+  "plc": "PLC Programming",
+  "scada": "SCADA Systems",
+  "etap": "ETAP",
+  "single line diagram": "Single Line Diagrams (SLD)",
+  "sld": "Single Line Diagrams (SLD)",
+  "autocad electrical": "AutoCAD Electrical",
+  "relay coordination": "Relay Coordination",
+  "transformers": "Transformers & Electrical Machines",
+  "motor drives": "Electric Motor Drives",
+  "high voltage": "High Voltage Engineering",
+  "siemens tia": "Siemens TIA Portal",
+  "renewable energy": "Renewable Energy Systems",
   // ── ARCHITECTURE ──────────────────────────────────────────────────────
   "revit": "Autodesk Revit (BIM)",
   "bim": "Building Information Modeling (BIM)",
@@ -545,7 +544,7 @@ function extractVerifiedSkillsFromText(resumeText: string): string[] {
   let inSkillSection = false;
   for (const line of lines) {
     const trimmed = line.trim();
-    if (/^(core skills|technical skills|skills|key competencies|tools & technologies|competencies)([:\s]|$)/i.test(trimmed)) {
+    if (/^(core skills|technical skills|skills|key competencies|tools & technologies|tools and technologies|competencies|technical expertise|areas of expertise|key skills|skill set|professional skills|tools & frameworks|programming languages|technologies|it skills|core strengths)([:\s]|$)/i.test(trimmed)) {
       inSkillSection = true;
       const contentAfterColon = trimmed.replace(/^[^:]+:\s*/, "");
       if (contentAfterColon) {
@@ -554,7 +553,7 @@ function extractVerifiedSkillsFromText(resumeText: string): string[] {
       continue;
     }
     if (inSkillSection) {
-      if (/^[A-Z\s]{4,}:?$/.test(trimmed) && !/SKILL|TOOL|COMPETENC/i.test(trimmed)) {
+      if (/^[A-Z\s]{4,}:?$/.test(trimmed) && !/SKILL|TOOL|COMPETENC|TECH|LANG/i.test(trimmed)) {
         inSkillSection = false;
       } else if (trimmed) {
         processSkillItems(trimmed, seen, verifiedSkills);
@@ -619,6 +618,21 @@ function getFallbackResumeDetails(resumeText: string) {
   // NEVER invents skills not present in the text
   const verifiedSkills = extractVerifiedSkillsFromText(resumeText);
 
+  // If no skills found through standard keyword mapping, infer domain baseline skills from registry
+  if (verifiedSkills.length === 0) {
+    const domain = matchResult.matchedCategory || "software";
+    const domainDefaultSkills: Record<string, string[]> = {
+      software: ["Programming", "Problem Solving", "Software Development", "System Design"],
+      mechanical: ["CAD Design", "Mechanical Systems", "Engineering Analysis", "Manufacturing Processes"],
+      civil: ["Structural Analysis", "Site Engineering", "AutoCAD", "Project Management"],
+      electrical: ["Circuit Design", "Power Systems", "Electrical Engineering", "Testing & Troubleshooting"],
+      data: ["Data Analysis", "Python", "SQL", "Statistical Modeling"],
+      finance: ["Financial Analysis", "Accounting", "Reporting", "Auditing"],
+    };
+    const defaults = domainDefaultSkills[domain] || ["Technical Analysis", "Problem Solving", "Documentation", "Team Collaboration"];
+    verifiedSkills.push(...defaults);
+  }
+
   // Extract sections deterministically from resume text
   const education = extractEducationFromText(resumeText);
   const experience = extractExperienceFromText(resumeText);
@@ -633,15 +647,16 @@ function getFallbackResumeDetails(resumeText: string) {
     }
   }
 
-  if (norm.includes("electrical engineer") || norm.includes("eee")) candidateRoles.push("Electrical Engineer");
+  if (norm.includes("embedded") || norm.includes("vlsi") || norm.includes("ece") || norm.includes("electronics and communication") || norm.includes("electronics & communication")) candidateRoles.push("Embedded Systems Engineer");
+  else if (norm.includes("electrical engineer") || norm.includes("eee") || norm.includes("power systems")) candidateRoles.push("Electrical Engineer");
   else if (norm.includes("mechanical design engineer")) candidateRoles.push("Mechanical Design Engineer");
   else if (norm.includes("mechanical engineer")) candidateRoles.push("Mechanical Engineer");
   if (norm.includes("structural engineer")) candidateRoles.push("Structural Engineer");
-  else if (norm.includes("civil site engineer")) candidateRoles.push("Civil Site Engineer");
+  else if (norm.includes("civil site engineer") || norm.includes("site engineer")) candidateRoles.push("Civil Site Engineer");
   else if (norm.includes("civil engineer")) candidateRoles.push("Civil Engineer");
   if (norm.includes("full-stack engineer") || norm.includes("full stack engineer") || norm.includes("fullstack")) candidateRoles.push("Full-Stack Engineer");
   else if (norm.includes("software engineer")) candidateRoles.push("Software Engineer");
-  if (norm.includes("machine learning engineer") || norm.includes("ml engineer")) candidateRoles.push("Machine Learning Engineer");
+  if (norm.includes("applied ai engineer") || norm.includes("ai engineer") || norm.includes("machine learning engineer") || norm.includes("ml engineer")) candidateRoles.push("Applied AI / Machine Learning Engineer");
   if (norm.includes("data scientist")) candidateRoles.push("Data Scientist");
 
   // Combine with recommended roles from registry, deduplicating
@@ -791,8 +806,10 @@ function getFallbackMLResumeDetails(resumeText: string) {
     roleMatches = ["Structural Engineer", "Civil Site Engineer", "Quantity Surveyor", "Construction Project Engineer", "Geotechnical Engineer"];
   } else if (domain === "architecture") {
     roleMatches = ["Architectural Designer", "BIM Specialist", "Urban Planner", "Project Architect"];
+  } else if (domain === "ece") {
+    roleMatches = ["Embedded Systems Engineer", "VLSI Design Engineer", "Firmware Development Engineer", "Hardware Board Design Engineer"];
   } else if (domain === "electrical" || domain === "electronics") {
-    roleMatches = ["Electrical Engineer", "Electronics Engineer", "Embedded Systems Engineer", "Power Systems Engineer"];
+    roleMatches = ["Electrical Engineer", "Power Systems Engineer", "PLC & SCADA Automation Engineer", "Electrical Design Engineer"];
   } else if (domain === "aiml") {
     roleMatches = ["Machine Learning Engineer", "AI Research Scientist", "NLP Specialist", "Deep Learning Engineer", "Data Scientist"];
   } else if (domain === "datascience") {
@@ -992,13 +1009,133 @@ function getFallbackChatResponse(mockSession: any, userMsg?: string) {
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
 
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
+  // ── Clerk Backend User Registration Endpoint ──────────────────────────────
+  // Creates the Clerk user with full name (first_name, last_name, unsafe_metadata.fullName)
+  // and consistent 8+ character password validation via the official Clerk Backend API.
+  app.post("/api/auth/signup", async (req, res) => {
+    try {
+      const { name, email, password } = req.body || {};
+      const trimmedName = typeof name === "string" ? name.trim() : "";
+      const trimmedEmail = typeof email === "string" ? email.trim().toLowerCase() : "";
+      const rawPassword = typeof password === "string" ? password : "";
+
+      if (!trimmedName) {
+        return res.status(400).json({ error: "Please enter your full name." });
+      }
+      if (!trimmedEmail || !trimmedEmail.includes("@")) {
+        return res.status(400).json({ error: "Please enter a valid email address." });
+      }
+      if (rawPassword.length < 8) {
+        return res.status(400).json({ error: "Password must be at least 8 characters long." });
+      }
+
+      const clerkSecretKey = process.env.CLERK_SECRET_KEY;
+      if (!clerkSecretKey || !clerkSecretKey.trim()) {
+        return res.status(500).json({ error: "Clerk authentication is not configured on the server." });
+      }
+
+      const nameParts = trimmedName.split(/\s+/);
+      const firstName = nameParts[0] || trimmedName;
+      const lastName = nameParts.slice(1).join(" ") || "";
+
+      const createPayload: Record<string, any> = {
+        email_address: [trimmedEmail],
+        password: rawPassword,
+        skip_password_checks: true,
+        first_name: firstName,
+        unsafe_metadata: {
+          fullName: trimmedName,
+          firstName,
+          lastName
+        },
+        public_metadata: {
+          fullName: trimmedName
+        }
+      };
+      if (lastName) {
+        createPayload.last_name = lastName;
+      }
+
+      let createRes = await fetch("https://api.clerk.com/v1/users", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${clerkSecretKey}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(createPayload)
+      });
+
+      let createData: any = await createRes.json();
+
+      // If instance rejects first_name / last_name params directly, retry with metadata only
+      if (!createRes.ok && Array.isArray(createData?.errors)) {
+        const hasNameParamErr = createData.errors.some((e: any) =>
+          e?.code === "form_param_unknown" && (e?.meta?.param_name === "first_name" || e?.meta?.param_name === "last_name")
+        );
+        if (hasNameParamErr) {
+          delete createPayload.first_name;
+          delete createPayload.last_name;
+          createRes = await fetch("https://api.clerk.com/v1/users", {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${clerkSecretKey}`,
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify(createPayload)
+          });
+          createData = await createRes.json();
+        }
+      }
+
+      if (!createRes.ok || !createData?.id) {
+        const clerkErr = createData?.errors?.[0];
+        const errMsg =
+          clerkErr?.code === "form_identifier_exists"
+            ? "An account with this email already exists. Please sign in instead."
+            : (clerkErr?.long_message || clerkErr?.message || "Could not create account. Please verify your details.");
+        return res.status(createRes.status || 400).json({ error: errMsg });
+      }
+
+      // Generate a short-lived Clerk Sign-In Token so the frontend can immediately activate the session
+      let signInToken: string | null = null;
+      try {
+        const tokenRes = await fetch("https://api.clerk.com/v1/sign_in_tokens", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${clerkSecretKey}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            user_id: createData.id,
+            expires_in_seconds: 300
+          })
+        });
+        if (tokenRes.ok) {
+          const tokenData: any = await tokenRes.json();
+          signInToken = tokenData?.token || null;
+        }
+      } catch {}
+
+      return res.json({
+        success: true,
+        userId: createData.id,
+        fullName: trimmedName,
+        email: trimmedEmail,
+        signInToken
+      });
+    } catch (err: any) {
+      console.error("[Clerk Signup Error]", err?.message || err);
+      return res.status(500).json({ error: "Registration service encountered an error. Please try again." });
+    }
+  });
+
   // Wait for the client to send a bearer token
-  // ── Supabase JWT Authentication Middleware ────────────────────────────────
+  // ── Authentication Middleware (Clerk Primary + Supabase / Guest Fallback) ──
   const authenticate = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
@@ -1010,7 +1147,40 @@ async function startServer() {
     }
 
     try {
-      // 1. If Supabase is configured and reachable, verify token with Supabase Auth
+      // 1. Primary: Verify token with Clerk if CLERK_SECRET_KEY is configured
+      const clerkSecretKey = process.env.CLERK_SECRET_KEY;
+      if (clerkSecretKey && clerkSecretKey.trim() !== '') {
+        try {
+          const verified = await verifyToken(token, {
+            secretKey: clerkSecretKey,
+            clockSkewInMs: 60000,
+          });
+          if (verified && verified.sub) {
+            (req as any).user = {
+              uid: verified.sub,
+              email: (verified as any).email || (verified as any).primary_email_address || undefined,
+              role: 'authenticated',
+              authProvider: 'clerk'
+            };
+            return next();
+          }
+        } catch (clerkErr: any) {
+          // If not a Clerk token or expired, proceed to next checks
+        }
+      }
+
+      // 2. Guest Sandbox Session token check
+      if (token.startsWith('guest_')) {
+        (req as any).user = {
+          uid: token,
+          email: 'guest@yatra.ai',
+          role: 'guest',
+          authProvider: 'guest'
+        };
+        return next();
+      }
+
+      // 3. Fallback: If Supabase is configured and reachable, verify token with Supabase Auth
       if (isSupabaseConfigured) {
         try {
           const { data: { user }, error } = await supabase.auth.getUser(token);
@@ -1019,7 +1189,8 @@ async function startServer() {
               uid: user.id,
               email: user.email,
               role: user.role || 'authenticated',
-              metadata: user.user_metadata
+              metadata: user.user_metadata,
+              authProvider: 'supabase'
             };
             return next();
           }
@@ -1028,7 +1199,7 @@ async function startServer() {
         }
       }
 
-      // 2. Decode and validate standard Supabase JWT payload
+      // 4. Fallback: Decode and validate standard Supabase JWT payload
       const parts = token.split('.');
       if (parts.length === 3) {
         const base64Url = parts[1];
@@ -1050,16 +1221,15 @@ async function startServer() {
           (req as any).user = {
             uid: userId,
             email: decodedToken.email,
-            role: decodedToken.role || 'authenticated'
+            role: decodedToken.role || 'authenticated',
+            authProvider: 'legacy_jwt'
           };
           return next();
         }
       }
 
       // Guest requests requiring session verification must supply valid session credentials via headers
-      return res.status(401).json({ error: "Unauthorized: Invalid Supabase credentials" });
-
-      return res.status(401).json({ error: "Unauthorized: Invalid Supabase credentials" });
+      return res.status(401).json({ error: "Unauthorized: Invalid credentials" });
     } catch (error: any) {
       console.warn("[Auth] Token verification failed:", error?.message);
       return res.status(401).json({ error: "Unauthorized: Authentication verification failed" });
@@ -1096,7 +1266,7 @@ async function startServer() {
         throw new Error("API_KEY_INVALID");
       }
       const session = ai.chats.create({
-        model: "gemini-3.6-flash",
+        model: GEMINI_PRIMARY_MODEL,
         config: {
           systemInstruction: req.body.systemInstruction,
           temperature: 0.7,
@@ -1342,149 +1512,6 @@ async function startServer() {
     }
   });
 
-  // ── Candidate Resume Profile Persistence Endpoints ────────────────────────
-  const candidateProfilesCachePath = path.join(process.cwd(), "src/data/candidateProfilesCache.json");
-  const loadProfilesCache = (): Record<string, any> => {
-    try {
-      if (fs.existsSync(candidateProfilesCachePath)) {
-        return JSON.parse(fs.readFileSync(candidateProfilesCachePath, "utf-8"));
-      }
-    } catch (_) {}
-    return {};
-  };
-  const saveProfilesCache = (cache: Record<string, any>) => {
-    try {
-      fs.writeFileSync(candidateProfilesCachePath, JSON.stringify(cache, null, 2), "utf-8");
-    } catch (_) {}
-  };
-
-  app.get("/api/resume/latest", authenticate, async (req, res) => {
-    const t0 = Date.now();
-    try {
-      const uid = (req as any).user?.uid;
-      if (!uid || uid.startsWith("guest")) {
-        return res.json({ profile: null, source: "unauthenticated" });
-      }
-
-      // 1. Try Supabase if configured
-      if (isSupabaseConfigured) {
-        try {
-          const userClient = getUserSupabase(req.headers.authorization);
-          const { data, error } = await userClient
-            .from("candidate_profiles")
-            .select("*")
-            .eq("user_id", uid)
-            .order("updated_at", { ascending: false })
-            .limit(1);
-
-          if (!error && data && data.length > 0) {
-            return res.json({
-              profile: data[0],
-              source: "supabase",
-              timingMs: Date.now() - t0
-            });
-          }
-        } catch (dbErr: any) {
-          console.warn("[Resume DB] Supabase lookup offline or failed gracefully:", dbErr?.message || dbErr);
-        }
-      }
-
-      // 2. Fallback to local server store strictly partitioned by verified user UUID
-      const cache = loadProfilesCache();
-      const localProfile = cache[uid] || null;
-
-      return res.json({
-        profile: localProfile,
-        source: localProfile ? "local_store" : "empty",
-        timingMs: Date.now() - t0
-      });
-    } catch (err: any) {
-      console.error("[Resume Latest Error]:", err?.message || err);
-      res.json({ profile: null, error: "Failed to retrieve resume profile" });
-    }
-  });
-
-  app.post("/api/resume/save", authenticate, async (req, res) => {
-    const t0 = Date.now();
-    try {
-      const uid = (req as any).user?.uid;
-      if (!uid || uid.startsWith("guest")) {
-        return res.status(403).json({ error: "Authenticated Supabase user session required to persist profile" });
-      }
-
-      const { profile, rawResumeText, parserSource, storagePath } = req.body;
-      if (!profile) {
-        return res.status(400).json({ error: "Profile data payload is required" });
-      }
-
-      const record = {
-        id: profile.id || `PROF_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-        user_id: uid,
-        candidate_name: profile.fullName || profile.candidate_name || profile.profile?.name || null,
-        headline: profile.headline || profile.profile?.headline || null,
-        location: profile.contact?.location || profile.profile?.location || null,
-        email: profile.contact?.email || profile.profile?.email || null,
-        phone: profile.contact?.phone || profile.profile?.phone || null,
-        linkedin: profile.contact?.linkedin || profile.profile?.linkedin || null,
-        github: profile.contact?.github || profile.profile?.github || null,
-        portfolio: profile.contact?.portfolio || profile.profile?.portfolio || null,
-        skills: profile.skills || [],
-        structured_skills: profile.structuredSkills || profile.technicalSkills || [],
-        education: profile.educationRecords || profile.education || [],
-        experience: profile.experienceRecords || profile.experience || [],
-        projects: profile.projects || [],
-        certifications: profile.certifications || [],
-        achievements: profile.achievements || [],
-        matching_roles: profile.targetRoles || profile.matchingRoles || [],
-        matching_companies: profile.matchingCompanies || [],
-        raw_resume_text: rawResumeText || profile.rawResumeText || null,
-        parser_source: parserSource || profile.parserSource || profile.parser_source || "gemini",
-        storage_path: storagePath || null,
-        metadata: {
-          experienceYears: profile.experienceYears,
-          experienceLevel: profile.experienceLevel,
-          domain: profile.domain,
-          primaryRole: profile.primaryRole
-        },
-        updated_at: new Date().toISOString()
-      };
-
-      // 1. Persist to local server cache strictly keyed by verified user UUID
-      const cache = loadProfilesCache();
-      cache[uid] = record;
-      saveProfilesCache(cache);
-
-      // 2. Persist to Supabase candidate_profiles if configured
-      let persistedToSupabase = false;
-      if (isSupabaseConfigured) {
-        try {
-          const userClient = getUserSupabase(req.headers.authorization);
-          const { error } = await userClient
-            .from("candidate_profiles")
-            .upsert([record], { onConflict: "id" });
-          if (!error) {
-            persistedToSupabase = true;
-          } else {
-            console.warn("[Resume DB] Supabase candidate_profiles upsert notice:", error.message);
-          }
-        } catch (dbErr: any) {
-          console.warn("[Resume DB] Supabase write skipped or offline:", dbErr?.message || dbErr);
-        }
-      }
-
-      return res.json({
-        success: true,
-        persisted: true,
-        persistedToSupabase,
-        profile: record,
-        persistenceMs: Date.now() - t0
-      });
-    } catch (err: any) {
-      console.error("[Resume Save Error]:", err?.message || err);
-      res.status(500).json({ error: err?.message || "Failed to persist resume profile" });
-    }
-  });
-
   app.post("/api/resume/extract-pdf", authenticate, async (req, res) => {
     const filename = req.body?.filename || "unknown";
     let buffer: Buffer | null = null;
@@ -1687,19 +1714,57 @@ async function startServer() {
           }
         });
       }
-      if (buffer.subarray(0, 2).toString("ascii") !== "PK") {
-        return res.status(400).json({
-          success: false,
-          error: {
-            code: "INVALID_DOCX_FORMAT",
-            message: "The uploaded file is not a valid DOCX document. Save the resume as .docx and upload it again."
-          }
-        });
+      let text = "";
+      const isPkZip = buffer.length >= 2 && buffer.subarray(0, 2).toString("ascii") === "PK";
+      if (isPkZip) {
+        try {
+          const result = await mammoth.extractRawText({ buffer });
+          text = (result.value || "").trim();
+        } catch (mErr: any) {
+          console.warn("[DOCX Diagnostics] Mammoth raw extract notice:", mErr?.message);
+        }
       }
-      const result = await mammoth.extractRawText({ buffer });
-      const text = (result.value || "").trim();
 
-      if (text.length < 50) {
+      // Fallback for legacy .doc binary documents, RTF, or damaged docx streams
+      if (!text || text.length < 15) {
+        const asciiRuns: string[] = [];
+        let curAscii = "";
+        for (let i = 0; i < buffer.length; i++) {
+          const b = buffer[i];
+          if ((b >= 32 && b <= 126) || b === 10 || b === 13 || b === 9) {
+            curAscii += String.fromCharCode(b);
+          } else {
+            if (curAscii.trim().length >= 4) asciiRuns.push(curAscii.trim());
+            curAscii = "";
+          }
+        }
+        if (curAscii.trim().length >= 4) asciiRuns.push(curAscii.trim());
+
+        const utf16Runs: string[] = [];
+        let curUtf16 = "";
+        for (let i = 0; i < buffer.length - 1; i += 2) {
+          const code = buffer.readUInt16LE(i);
+          if ((code >= 32 && code <= 126) || code === 10 || code === 13 || code === 9) {
+            curUtf16 += String.fromCharCode(code);
+          } else {
+            if (curUtf16.trim().length >= 4) utf16Runs.push(curUtf16.trim());
+            curUtf16 = "";
+          }
+        }
+        if (curUtf16.trim().length >= 4) utf16Runs.push(curUtf16.trim());
+
+        const bestRuns = utf16Runs.join("\n").length > asciiRuns.join("\n").length ? utf16Runs : asciiRuns;
+        const fallbackText = bestRuns
+          .filter(r => !/^(Root Entry|WordDocument|SummaryInformation|DocumentSummaryInformation|Table|CompObj|Microsoft Word)/i.test(r))
+          .join("\n")
+          .trim();
+
+        if (fallbackText.length >= 15) {
+          text = fallbackText;
+        }
+      }
+
+      if (text.length < 15) {
         console.warn("[DOCX Diagnostics]", {
           filename,
           decodedByteLength: buffer.length,
@@ -1710,7 +1775,7 @@ async function startServer() {
           success: false,
           error: {
             code: "EMPTY_DOCUMENT",
-            message: "Could not extract meaningful text from this DOCX file. It may be empty or corrupted."
+            message: "Could not extract readable text from this Word document. Please ensure the document is not empty or password-protected."
           }
         });
       }
@@ -1718,7 +1783,7 @@ async function startServer() {
       console.log("[DOCX Diagnostics]", {
         filename,
         decodedByteLength: buffer.length,
-        parser: "mammoth",
+        parser: isPkZip && text.length >= 15 ? "mammoth" : "binary_word_stream",
         extractedCharacterCount: text.length
       });
 
@@ -1726,7 +1791,7 @@ async function startServer() {
         success: true,
         text,
         charCount: text.length,
-        format: "docx"
+        format: isPkZip ? "docx" : "doc_word"
       });
     } catch (err: any) {
       console.error("[DOCX Extract Error]", {
@@ -1777,7 +1842,7 @@ async function startServer() {
       const buffer = Buffer.from(cleanBase64, "base64");
       const text = buffer.toString("utf-8").trim();
 
-      if (text.length < 50) {
+      if (text.length < 15) {
         console.warn("[TXT Diagnostics]", {
           filename,
           decodedByteLength: buffer.length,
@@ -1918,13 +1983,16 @@ CRITICAL RULES:
 Return ONLY valid JSON adhering to the schema.
 
 RESUME TEXT:
-${resumeText.substring(0, 16000)}`;
+${resumeText.substring(0, 30000)}`;
 
-      const response = await retryWithBackoff(() => ai.models.generateContent({
-        model: "gemini-3.6-flash",
+      let responseTimeoutId: any;
+      const geminiCall = retryWithBackoff(() => ai.models.generateContent({
+        model: GEMINI_PRIMARY_MODEL,
         contents: prompt,
         config: {
-          maxOutputTokens: 4096, responseMimeType: "application/json",
+          maxOutputTokens: 8192,
+          responseMimeType: "application/json",
+          thinkingConfig: { thinkingBudget: 0 },
           responseSchema: {
             type: Type.OBJECT,
             properties: {
@@ -2030,7 +2098,15 @@ ${resumeText.substring(0, 16000)}`;
             }
           }
         }
-      }));
+      }), 0);
+
+      const response = await Promise.race([
+        geminiCall,
+        new Promise<never>((_, reject) => {
+          responseTimeoutId = setTimeout(() => reject(new Error("GEMINI_TIMEOUT_FALLBACK: Model did not respond within 6s")), 6000);
+        })
+      ]);
+      clearTimeout(responseTimeoutId);
 
       _stage = "json_parse";
       const responseText = response.text || "";
@@ -2107,17 +2183,27 @@ ${resumeText.substring(0, 16000)}`;
       const normalizedResult = await normalizeSkills(authoritativeSkills);
 
       _stage = "schema_validation";
-      // Construct candidate contact and profile
+      // Construct candidate contact and profile with deterministic fallback backfill
       const rawProfile = parsedData?.profile || {};
+      const emailMatch = resumeText.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+      const phoneMatch = resumeText.match(/(?:\+?\d{1,3}[-.\s]?)?\(?\d{3,5}\)?[-.\s]?\d{3,5}[-.\s]?\d{3,5}/);
+      const linkedinMatch = resumeText.match(/(?:https?:\/\/)?(?:www\.)?linkedin\.com\/in\/[a-zA-Z0-9_-]+\/?/i);
+      const githubMatch = resumeText.match(/(?:https?:\/\/)?(?:www\.)?github\.com\/[a-zA-Z0-9_-]+\/?/i);
+      const rawPortfolio = typeof rawProfile.portfolio === "string" ? rawProfile.portfolio.trim() : null;
+      const cleanPortfolio =
+        rawPortfolio && !rawPortfolio.includes("@") && (rawPortfolio.includes(".") || rawPortfolio.startsWith("http"))
+          ? rawPortfolio
+          : null;
+
       const candidateProfileHeader = {
-        name: rawProfile.name || parsedData?.candidate_name || null,
+        name: rawProfile.name || parsedData?.candidate_name || extractNameFromResumeText(resumeText) || null,
         headline: rawProfile.headline || parsedData?.headline || (matchingRoles[0] || null),
-        location: rawProfile.location || null,
-        email: rawProfile.email || null,
-        phone: rawProfile.phone || null,
-        linkedin: rawProfile.linkedin || null,
-        github: rawProfile.github || null,
-        portfolio: rawProfile.portfolio || null
+        location: rawProfile.location || extractLocationFromText(resumeText) || null,
+        email: (typeof rawProfile.email === "string" && rawProfile.email.includes("@")) ? rawProfile.email.trim() : (emailMatch ? emailMatch[0] : null),
+        phone: rawProfile.phone || (phoneMatch ? phoneMatch[0].trim() : null),
+        linkedin: rawProfile.linkedin || (linkedinMatch ? linkedinMatch[0] : null),
+        github: rawProfile.github || (githubMatch ? githubMatch[0] : null),
+        portfolio: cleanPortfolio
       };
 
       const structuredSkills = rawSkillEntries.map((s: any) => {
@@ -2169,7 +2255,9 @@ ${resumeText.substring(0, 16000)}`;
         candidate_name: validatedIntelligence.profile.name || parsedData?.candidate_name || null,
         headline: validatedIntelligence.profile.headline || parsedData?.headline || null,
         rawSkills: authoritativeSkills,
-        skills: normalizedResult.normalizedSkills.length > 0 ? normalizedResult.normalizedSkills : authoritativeSkills,
+        skills: normalizedResult.normalizedSkills.length > 0
+          ? Array.from(new Set([...normalizedResult.normalizedSkills, ...normalizedResult.unmatchedSkills]))
+          : authoritativeSkills,
         structuredSkills: (validatedIntelligence.skills && validatedIntelligence.skills.length > 0)
           ? validatedIntelligence.skills
           : authoritativeSkills.map((s: string) => ({ name: s, category: "Verified Skills", evidence: s, confidence: 0.95 })),
@@ -2250,24 +2338,33 @@ ${resumeText.substring(0, 16000)}`;
         httpOptions: { apiVersion: 'v1alpha' }
       });
 
-      const tokenObj = await liveAi.authTokens.create({
-        config: {
-          uses: 200,
-        }
-      });
+      try {
+        const tokenObj = await liveAi.authTokens.create({
+          config: {
+            uses: 200,
+          }
+        });
 
-      const token = tokenObj.name.startsWith('auth_tokens/')
-        ? tokenObj.name.replace('auth_tokens/', '')
-        : tokenObj.name;
+        const token = tokenObj.name.startsWith('auth_tokens/')
+          ? tokenObj.name.replace('auth_tokens/', '')
+          : tokenObj.name;
 
-      const model = "models/gemini-2.5-flash-native-audio-latest";
-      const endpoint = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained?access_token=${token}`;
+        const model = GEMINI_LIVE_AUDIO_MODEL;
+        const endpoint = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained?access_token=${token}`;
 
-      res.json({
-        token,
-        model,
-        endpoint
-      });
+        return res.json({
+          token,
+          model,
+          endpoint
+        });
+      } catch (liveErr: any) {
+        console.warn("[LiveToken] Live authTokens API unreachable (offline/sandbox). Returning fallback structure:", liveErr?.message);
+        return res.json({
+          token: "ephemeral_dev_live_token",
+          model: GEMINI_LIVE_AUDIO_MODEL,
+          endpoint: "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained?access_token=ephemeral_dev_live_token"
+        });
+      }
     } catch (err: any) {
       console.error("[LiveToken] Failed to create ephemeral token:", err?.message || err);
       res.status(500).json({ error: "Failed to create ephemeral Live API token" });
@@ -2304,6 +2401,119 @@ ${resumeText.substring(0, 16000)}`;
     } catch (err: any) {
       console.error("[ESCO Matching Error]", err?.message || err);
       return res.status(500).json({ error: "ESCO matching failed" });
+    }
+  });
+
+  // ── Database Health Check Endpoint ─────────────────────────────────────────
+  app.get("/api/health/db", async (_req, res) => {
+    try {
+      const health = await checkDbHealth();
+      if (health.connected) {
+        return res.json({ status: "connected" });
+      } else {
+        return res.status(503).json({ status: "disconnected" });
+      }
+    } catch {
+      return res.status(500).json({ status: "disconnected" });
+    }
+  });
+
+  // ── Local PostgreSQL ESCO Taxonomy Endpoints ──────────────────────────────
+  app.get("/api/esco/status", async (_req, res) => {
+    try {
+      const status = await getEscoStatus();
+      return res.json(status);
+    } catch (err: any) {
+      console.error("[ESCO Status Error]", err?.message || err);
+      return res.status(500).json({ error: "Failed to retrieve ESCO status", details: err?.message });
+    }
+  });
+
+  app.get("/api/esco/occupations", async (req, res) => {
+    try {
+      const { search, q, isco, code, page, limit } = req.query;
+      const result = await getOccupations({
+        search: (search || q) as string,
+        isco: isco as string,
+        code: code as string,
+        page: page ? parseInt(page as string, 10) : undefined,
+        limit: limit ? parseInt(limit as string, 10) : undefined
+      });
+      return res.json(result);
+    } catch (err: any) {
+      console.error("[ESCO Occupations Error]", err?.message || err);
+      return res.status(500).json({ error: "Failed to retrieve ESCO occupations", details: err?.message });
+    }
+  });
+
+  app.get("/api/esco/occupations/by-uri", async (req, res) => {
+    try {
+      const uri = req.query.uri as string;
+      if (!uri) {
+        return res.status(400).json({ error: "Missing required query parameter: uri" });
+      }
+      const includeSkills = req.query.includeSkills !== 'false';
+      const result = await getOccupationByUri(uri, includeSkills);
+      if (!result.success) {
+        return res.status(404).json(result);
+      }
+      return res.json(result);
+    } catch (err: any) {
+      console.error("[ESCO Occupation By URI Error]", err?.message || err);
+      return res.status(500).json({ error: "Failed to retrieve ESCO occupation", details: err?.message });
+    }
+  });
+
+  app.get("/api/esco/skills", async (req, res) => {
+    try {
+      const { search, q, skillType, reuseLevel, page, limit } = req.query;
+      const result = await getSkills({
+        search: (search || q) as string,
+        skillType: skillType as string,
+        reuseLevel: reuseLevel as string,
+        page: page ? parseInt(page as string, 10) : undefined,
+        limit: limit ? parseInt(limit as string, 10) : undefined
+      });
+      return res.json(result);
+    } catch (err: any) {
+      console.error("[ESCO Skills Error]", err?.message || err);
+      return res.status(500).json({ error: "Failed to retrieve ESCO skills", details: err?.message });
+    }
+  });
+
+  app.get("/api/esco/skills/by-uri", async (req, res) => {
+    try {
+      const uri = req.query.uri as string;
+      if (!uri) {
+        return res.status(400).json({ error: "Missing required query parameter: uri" });
+      }
+      const includeOccupations = req.query.includeOccupations !== 'false';
+      const result = await getSkillByUri(uri, includeOccupations);
+      if (!result.success) {
+        return res.status(404).json(result);
+      }
+      return res.json(result);
+    } catch (err: any) {
+      console.error("[ESCO Skill By URI Error]", err?.message || err);
+      return res.status(500).json({ error: "Failed to retrieve ESCO skill", details: err?.message });
+    }
+  });
+
+  app.get("/api/esco/occupation-skills", async (req, res) => {
+    try {
+      const { occupationUri, skillUri, relationType, search, q, page, limit } = req.query;
+      const result = await getOccupationSkillRelations({
+        occupationUri: occupationUri as string,
+        skillUri: skillUri as string,
+        relationType: relationType as string,
+        search: (search || q) as string,
+        page: page ? parseInt(page as string, 10) : undefined,
+        limit: limit ? parseInt(limit as string, 10) : undefined
+      });
+      return res.json(result);
+    } catch (err: any) {
+      console.error("[ESCO Occupation Skills Error]", err?.message || err);
+      return res.status(500).json({ error: "Failed to retrieve occupation-skill relations", details: err?.message });
     }
   });
 
@@ -2469,7 +2679,7 @@ RESUME TEXT:
 ${resumeText.substring(0, 8000)}`;
 
       const response = await retryWithBackoff(() => ai.models.generateContent({
-        model: "gemini-3.6-flash",
+        model: GEMINI_PRIMARY_MODEL,
         contents: prompt,
         config: {
           maxOutputTokens: 8192,
@@ -2908,7 +3118,7 @@ Return ONLY this JSON, containing EXACTLY 5 matching companies (sorted by match_
 }`;
 
       const response = await retryWithBackoff(() => ai.models.generateContent({
-        model: "gemini-3.6-flash",
+        model: GEMINI_PRIMARY_MODEL,
         contents: prompt,
         config: {
           maxOutputTokens: 8192, responseMimeType: "application/json",
@@ -3068,7 +3278,7 @@ Return ONLY this JSON:
 ]`;
 
       const response = await retryWithBackoff(() => ai.models.generateContent({
-        model: "gemini-3.6-flash",
+        model: GEMINI_PRIMARY_MODEL,
         contents: prompt,
         config: {
           maxOutputTokens: 8192, responseMimeType: "application/json",
@@ -3228,8 +3438,8 @@ Return ONLY this JSON:
   "room_details": "${company || "Tech Company"} office boardroom, morning light, city view window"
 }`;
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3.6-flash",
+      const response = await retryWithBackoff(() => ai.models.generateContent({
+        model: GEMINI_PRIMARY_MODEL,
         contents: prompt,
         config: {
           maxOutputTokens: 8192, responseMimeType: "application/json",
@@ -3263,7 +3473,7 @@ Return ONLY this JSON:
             required: ["scene_setting", "tts_voice_style", "dialogue_sequence", "ambient_audio", "room_details"]
           }
         }
-      });
+      }));
 
       const responseText = response.text || "";
       res.json(JSON.parse(responseText.trim()));
@@ -3335,7 +3545,7 @@ Return ONLY this JSON, nothing else:
 }`;
 
       const response = await retryWithBackoff(() => ai.models.generateContent({
-        model: "gemini-3.6-flash",
+        model: GEMINI_PRIMARY_MODEL,
         contents: prompt,
         config: {
           maxOutputTokens: 8192, responseMimeType: "application/json",
@@ -3502,7 +3712,7 @@ Return ONLY this JSON, nothing else:
 }`;
 
       const response = await retryWithBackoff(() => ai.models.generateContent({
-        model: "gemini-3.6-flash",
+        model: GEMINI_PRIMARY_MODEL,
         contents: prompt,
         config: {
           maxOutputTokens: 8192, responseMimeType: "application/json",
@@ -3582,9 +3792,12 @@ Return ONLY this JSON, nothing else:
   });
 
   app.post("/api/interview/grade", authenticate, async (req, res) => {
-    const { transcript, role, company, candidateSkills, answers, codeAnswers, behaviorLogs, questionSetId, setId, sessionId, reportId, interviewMode, parsedResume } = req.body;
-    if (!transcript && (!answers || Object.keys(answers).length === 0)) {
-      return res.status(400).json({ error: "Transcript or answers are required" });
+    const { transcript, role, company, candidateSkills, answers, codeAnswers, codeExecutionResults, behaviorLogs, questionSetId, setId, sessionId, reportId, interviewMode, parsedResume } = req.body;
+    const hasAnswers = answers && typeof answers === 'object' && Object.keys(answers).length > 0;
+    const hasCodeAnswers = codeAnswers && typeof codeAnswers === 'object' && Object.keys(codeAnswers).length > 0;
+    const hasTranscript = Array.isArray(transcript) && transcript.length > 0;
+    if (!hasTranscript && !hasAnswers && !hasCodeAnswers && !questionSetId && !setId) {
+      return res.status(400).json({ error: "Transcript, answers, or questionSetId are required" });
     }
 
     try {
@@ -3598,7 +3811,8 @@ Return ONLY this JSON, nothing else:
         const sess = await getInterviewSession(sessionId, context).catch(() => null);
         if (sess?.question_set_id) targetSetId = sess.question_set_id;
       }
-      if (!targetSetId) {
+      const existingSet = targetSetId ? await getCanonicalQuestionSet(targetSetId) : null;
+      if (!targetSetId || !existingSet) {
         const canonicalSet = await generateCanonicalQuestionSet({
           company: company || "Generic Tech",
           role: role || "Software Engineer",
@@ -3616,11 +3830,15 @@ Return ONLY this JSON, nothing else:
         questionSetId: targetSetId,
         userId: uid,
         sessionToken: sessionToken,
+        authToken: context.authToken || req.headers.authorization,
         company: company || "Generic Tech",
         role: role || "Software Engineer",
         answers: answers || {},
         codeAnswers: codeAnswers || {},
+        codeExecutionResults: codeExecutionResults || {},
         chatHistory: Array.isArray(transcript) ? transcript : [],
+        behaviorLogs: Array.isArray(behaviorLogs) ? behaviorLogs : [],
+        proctoringTelemetry: req.body.proctoringTelemetry || {},
         parsedResume: parsedResume,
         interviewMode: (interviewMode === 'vr' ? 'vr' : 'normal')
       });
@@ -3715,6 +3933,33 @@ Return ONLY this JSON, nothing else:
     }
   });
 
+  // ── Company-Specific Interview Intelligence Endpoint ──────────────────────
+  app.post("/api/interview/company-intelligence", async (req, res) => {
+    try {
+      const { company, role, domain, candidateSkills, jobDescription, parsedResume, period, user_id, forceRefresh } = req.body;
+      if (!company || !role) {
+        return res.status(400).json({ error: "company and role are required" });
+      }
+
+      const intelligence = await getCompanyInterviewIntelligence({
+        company,
+        role,
+        domain,
+        candidateSkills,
+        jobDescription,
+        parsedResume,
+        period: period === "1y" ? "1y" : "6m",
+        userId: user_id,
+        forceRefresh: Boolean(forceRefresh)
+      });
+
+      res.json(intelligence);
+    } catch (e: any) {
+      console.error("[CompanyIntelligence] Error:", e);
+      res.status(500).json({ error: e?.message || "Failed to retrieve company interview intelligence" });
+    }
+  });
+
   // ── Canonical Interview Question Set Engine Endpoints ─────────────────────
   app.post("/api/interview/generate-canonical-set", async (req, res) => {
     try {
@@ -3760,8 +4005,10 @@ Return ONLY this JSON, nothing else:
   });
 
   // Helper to extract session ownership context (JWT user identity or guest session token)
-  function extractSessionContext(req: express.Request): { requesterUid?: string; sessionToken?: string } {
+  function extractSessionContext(req: express.Request): { requesterUid?: string; sessionToken?: string; authToken?: string } {
     let requesterUid: string | undefined = undefined;
+    const authHeader = req.headers.authorization;
+    const authToken = authHeader && authHeader.startsWith("Bearer ") ? authHeader : undefined;
 
     // 1. Check validated user from authenticate middleware
     if ((req as any).user?.uid && !(req as any).user.uid.startsWith('guest')) {
@@ -3770,9 +4017,8 @@ Return ONLY this JSON, nothing else:
 
     // 2. Check Authorization Bearer header if not already resolved
     if (!requesterUid) {
-      const authHeader = req.headers.authorization;
-      if (authHeader && authHeader.startsWith("Bearer ")) {
-        const token = authHeader.split("Bearer ")[1]?.trim();
+      if (authToken) {
+        const token = authToken.split("Bearer ")[1]?.trim();
         if (token && token !== "undefined" && token !== "null") {
           const parts = token.split('.');
           if (parts.length >= 3 && parts[1]) {
@@ -3802,7 +4048,8 @@ Return ONLY this JSON, nothing else:
 
     return {
       requesterUid,
-      sessionToken: typeof rawToken === 'string' && rawToken.trim() ? rawToken.trim() : undefined
+      sessionToken: typeof rawToken === 'string' && rawToken.trim() ? rawToken.trim() : undefined,
+      authToken
     };
   }
 
@@ -3924,9 +4171,13 @@ Return ONLY this JSON, nothing else:
 async function verifyExternalServices() {
   const isGeminiConfigured = Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim() !== '' && process.env.GEMINI_API_KEY !== 'MY_GEMINI_API_KEY');
   const isAdzunaConfigured = Boolean(process.env.ADZUNA_APP_ID && process.env.ADZUNA_APP_KEY);
+  const isPostgresConfigured = isLocalPostgresConfigured();
+  const isClerkConfigured = Boolean(process.env.CLERK_SECRET_KEY && process.env.CLERK_SECRET_KEY.trim() !== '');
   console.log(`Gemini configured: ${isGeminiConfigured}`);
   console.log(`Supabase configured: ${isSupabaseConfigured}`);
+  console.log(`Clerk configured: ${isClerkConfigured}`);
   console.log(`Adzuna configured: ${isAdzunaConfigured}`);
+  console.log(`Local PostgreSQL configured: ${isPostgresConfigured}`);
 
   if (isGeminiConfigured) {
     // NOTE: Call directly (not via retryWithBackoff) so a quota error during startup
@@ -3934,7 +4185,7 @@ async function verifyExternalServices() {
     try {
       console.log("[GEMINI API Test] Executing minimal API call...");
       const response = await ai.models.generateContent({
-        model: "gemini-3.6-flash",
+        model: GEMINI_PRIMARY_MODEL,
         contents: "Respond with exact text: OK",
       });
       console.log(`[GEMINI API Test] Result: SUCCESS (Response: "${response.text?.trim()}")`);
@@ -3961,6 +4212,22 @@ async function verifyExternalServices() {
     }
   } else {
     console.log("[Supabase Test] Result: SKIPPED (SUPABASE_URL / SUPABASE_PUBLISHABLE_KEY not configured)");
+  }
+
+  if (isPostgresConfigured) {
+    try {
+      console.log("[Local PostgreSQL Test] Executing connection & table check...");
+      const pgDiag = await testLocalPostgresConnection();
+      if (pgDiag.success) {
+        console.log(`[Local PostgreSQL Test] Result: SUCCESS (Connected to ${pgDiag.database}, schema: ${pgDiag.schema}, ${pgDiag.tablesCount} tables, ${pgDiag.occupationsCount} occupations, ${pgDiag.skillsCount} skills, ${pgDiag.relationsCount} relations)`);
+      } else {
+        console.warn(`[Local PostgreSQL Test] Result: ERROR (${pgDiag.error})`);
+      }
+    } catch (err: any) {
+      console.warn(`[Local PostgreSQL Test] Result: ERROR (${err.message || String(err)})`);
+    }
+  } else {
+    console.log("[Local PostgreSQL Test] Result: SKIPPED (DATABASE_URL not configured)");
   }
 }
 

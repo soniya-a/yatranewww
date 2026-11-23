@@ -1,5 +1,11 @@
 import { GoogleGenAI } from "@google/genai";
 import {
+  GEMINI_PRIMARY_MODEL,
+  executeGeminiWithRetry,
+  isGeminiTransientError,
+  checkIsQuotaError
+} from "../lib/geminiConfig";
+import {
   CareerIntelligenceRoadmap,
   RoadmapGenerationInput,
   RoadmapItem,
@@ -346,64 +352,28 @@ Return ONLY valid JSON matching this schema:
 }`;
 
   let responseText = "";
-  const candidateModels = [
-    process.env.GEMINI_MODEL || "gemini-3.8-flash",
-    "gemini-3.8-flash-lite",
-    "gemini-1.5-flash"
-  ];
-
-  let lastError: any = null;
-  for (const modelName of candidateModels) {
-    try {
-      const response = await ai.models.generateContent({
-        model: modelName,
+  try {
+    const response = await executeGeminiWithRetry(
+      () => ai.models.generateContent({
+        model: GEMINI_PRIMARY_MODEL,
         contents: prompt,
         config: {
           maxOutputTokens: 8192,
           responseMimeType: "application/json",
         }
-      });
-      responseText = response.text || "";
-      if (responseText.trim().length > 0) {
-        lastError = null;
-        break;
+      }),
+      {
+        maxRetries: 2,
+        initialDelayMs: 1000,
+        operationName: "RoadmapEngine"
       }
-    } catch (err: any) {
-      lastError = err;
-      const errStr = JSON.stringify(err || {}).toLowerCase() + " " + (err?.message || "").toLowerCase();
-      // If 503 (model spike) or 404 (model retired), continue to next candidate model
-      if (errStr.includes("503") || errStr.includes("demand") || errStr.includes("404") || errStr.includes("not_found")) {
-        console.warn(`[RoadmapEngine] Model ${modelName} unavailable, attempting next candidate model...`);
-        continue;
-      }
-      // If 429 quota or rate-limit, break and throw GeminiRateLimitError
-      if (
-        errStr.includes("429") || 
-        errStr.includes("quota") || 
-        errStr.includes("rate_limit") || 
-        errStr.includes("resource_exhausted") ||
-        errStr.includes("circuit_breaker")
-      ) {
-        throw new GeminiRateLimitError();
-      }
-    }
-  }
-
-  if (lastError && !responseText) {
-    const errStr = JSON.stringify(lastError || {}).toLowerCase() + " " + (lastError?.message || "").toLowerCase();
-    if (
-      errStr.includes("429") || 
-      errStr.includes("503") ||
-      errStr.includes("quota") || 
-      errStr.includes("rate_limit") || 
-      errStr.includes("resource_exhausted") ||
-      errStr.includes("demand") ||
-      errStr.includes("unavailable") ||
-      errStr.includes("circuit_breaker")
-    ) {
+    );
+    responseText = response.text || "";
+  } catch (err: any) {
+    if (checkIsQuotaError(err) || isGeminiTransientError(err)) {
       throw new GeminiRateLimitError();
     }
-    throw lastError;
+    throw err;
   }
 
   let cleanText = responseText.trim();
@@ -496,7 +466,7 @@ Return ONLY valid JSON matching this schema:
     source_metadata: {
       primary_sources_count: 9,
       verified_urls_count: 9,
-      model: "gemini-3.8-flash"
+      model: GEMINI_PRIMARY_MODEL
     },
     status: "active"
   };

@@ -1,4 +1,4 @@
-import { supabase, isSupabaseConfigured } from './supabase';
+import { isLocalPostgresConfigured, queryLocalPostgres } from './localPostgres';
 
 export type NormalizationMethod = "alias" | "exact" | "normalized_exact" | "unmatched";
 
@@ -177,40 +177,22 @@ export function normalizeKey(text: string): string {
     .replace(/\s+/g, ' ');
 }
 
-// In-memory cache for Supabase canonical taxonomy
+// In-memory cache for canonical / ESCO skills taxonomy
 let isTaxonomyLoaded = false;
 const canonicalSkillsExact = new Map<string, string>(); // lowercase -> canonical display name
 const canonicalSkillsNormalized = new Map<string, string>(); // normalizedKey -> canonical display name
 
 /**
- * Loads canonical skills taxonomy from Supabase into memory cache.
+ * Loads canonical skills taxonomy into memory cache (no-op for dead legacy endpoints).
  */
 export async function loadCanonicalTaxonomy(): Promise<void> {
-  if (isTaxonomyLoaded || !isSupabaseConfigured) return;
-
-  try {
-    const { data, error } = await supabase
-      .from('canonical_skills')
-      .select('preferred_name');
-
-    if (!error && data) {
-      for (const row of data) {
-        if (row.preferred_name && typeof row.preferred_name === 'string') {
-          const display = row.preferred_name.trim();
-          canonicalSkillsExact.set(display.toLowerCase(), display);
-          canonicalSkillsNormalized.set(normalizeKey(display), display);
-        }
-      }
-      isTaxonomyLoaded = true;
-    }
-  } catch (err) {
-    console.error("[SkillNormalizer] Failed to load canonical skills taxonomy:", err);
-  }
+  isTaxonomyLoaded = true;
 }
 
 /**
- * Normalizes an individual skill deterministically.
+ * Normalizes an individual skill deterministically in memory.
  * Returns provenance diagnostic including canonical name and method.
+ * Never makes sequential per-skill network calls.
  */
 export async function normalizeSkill(rawSkill: string): Promise<SkillDiagnostic> {
   if (!rawSkill || typeof rawSkill !== 'string') {
@@ -224,11 +206,6 @@ export async function normalizeSkill(rawSkill: string): Promise<SkillDiagnostic>
 
   const lower = trimmed.toLowerCase();
   const normalized = normalizeKey(trimmed);
-
-  // Ensure canonical taxonomy is loaded
-  if (!isTaxonomyLoaded && isSupabaseConfigured) {
-    await loadCanonicalTaxonomy();
-  }
 
   // 1. Check Known Safe Tech Aliases
   if (KNOWN_TECH_ALIASES[lower]) {
@@ -253,46 +230,76 @@ export async function normalizeSkill(rawSkill: string): Promise<SkillDiagnostic>
     return { raw: rawSkill, canonical, method, matchedSource: "known_alias" };
   }
 
-  // 2. Check Supabase canonical_skills taxonomy
+  // 2. Check cached canonical / ESCO skills taxonomy
   if (canonicalSkillsExact.has(lower)) {
     const canonical = canonicalSkillsExact.get(lower)!;
     const method: NormalizationMethod = trimmed === canonical ? "exact" : "normalized_exact";
-    return { raw: rawSkill, canonical, method, matchedSource: "canonical_skills" };
+    return { raw: rawSkill, canonical, method, matchedSource: "esco_skills" };
   }
 
   if (canonicalSkillsNormalized.has(normalized)) {
     const canonical = canonicalSkillsNormalized.get(normalized)!;
-    return { raw: rawSkill, canonical, method: "normalized_exact", matchedSource: "canonical_skills" };
+    return { raw: rawSkill, canonical, method: "normalized_exact", matchedSource: "esco_skills" };
   }
 
-  // 3. Check Supabase public.esco_skills table (exact case-insensitive match)
-  if (isSupabaseConfigured) {
-    try {
-      const { data: escoMatch } = await supabase
-        .from('esco_skills')
-        .select('preferred_label')
-        .ilike('preferred_label', trimmed)
-        .limit(1);
-
-      if (escoMatch && escoMatch.length > 0 && escoMatch[0].preferred_label) {
-        const canonical = escoMatch[0].preferred_label.trim();
-        const method: NormalizationMethod = trimmed === canonical ? "exact" : "normalized_exact";
-        return { raw: rawSkill, canonical, method, matchedSource: "esco_skills" };
-      }
-    } catch {
-      // Non-fatal, proceed to unmatched
-    }
-  }
-
-  // 4. Unknown / Insufficient Confidence: NEVER fabricate or force broad semantic leap
+  // 3. Unknown / Insufficient Confidence: NEVER fabricate or force broad semantic leap
   return { raw: rawSkill, canonical: null, method: "unmatched" };
 }
 
 /**
  * Normalizes an array of raw skills deterministically.
- * Deduplicates canonical representations while preserving all diagnostics and unmatched skills.
+ * Performs a single bounded batch query against Neon PostgreSQL esco_raw.skills_en for any uncached terms,
+ * never blocking or issuing sequential per-skill network requests.
  */
 export async function normalizeSkills(rawSkills: string[]): Promise<NormalizationResult> {
+  // Batch pre-warm any uncached candidate skills from Neon PostgreSQL esco_raw.skills_en in ONE query
+  if (isLocalPostgresConfigured() && Array.isArray(rawSkills) && rawSkills.length > 0) {
+    const uncachedLowers = new Set<string>();
+    for (const raw of rawSkills) {
+      if (typeof raw !== 'string') continue;
+      const trimmed = raw.trim();
+      if (!trimmed) continue;
+      const lower = trimmed.toLowerCase();
+      const normalized = normalizeKey(trimmed);
+      if (
+        !KNOWN_TECH_ALIASES[lower] &&
+        !KNOWN_TECH_ALIASES[normalized] &&
+        !canonicalSkillsExact.has(lower) &&
+        !canonicalSkillsNormalized.has(normalized)
+      ) {
+        uncachedLowers.add(lower);
+      }
+    }
+
+    if (uncachedLowers.size > 0) {
+      let batchTimer: any;
+      try {
+        const batchQuery = queryLocalPostgres<{ preferredlabel: string }>(
+          `SELECT preferredlabel FROM esco_raw.skills_en WHERE LOWER(preferredlabel) = ANY($1)`,
+          [Array.from(uncachedLowers)]
+        );
+        const res = await Promise.race([
+          batchQuery,
+          new Promise<null>((resolve) => {
+            batchTimer = setTimeout(() => resolve(null), 2000);
+          })
+        ]);
+        clearTimeout(batchTimer);
+        if (res && Array.isArray(res.rows)) {
+          for (const row of res.rows) {
+            if (row.preferredlabel && typeof row.preferredlabel === 'string') {
+              const display = row.preferredlabel.trim();
+              canonicalSkillsExact.set(display.toLowerCase(), display);
+              canonicalSkillsNormalized.set(normalizeKey(display), display);
+            }
+          }
+        }
+      } catch {
+        clearTimeout(batchTimer);
+      }
+    }
+  }
+
   const normalizedSkills: string[] = [];
   const unmatchedSkills: string[] = [];
   const normalizationDiagnostics: SkillDiagnostic[] = [];

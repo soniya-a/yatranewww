@@ -17,6 +17,15 @@ import fs from 'fs';
 test.describe('VR Interview Acceptance Suite', () => {
   test.setTimeout(90000);
 
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem('guest_session', 'true');
+      localStorage.setItem('guest_uid', 'test-vr-user');
+      localStorage.setItem('guest_email', 'vr-candidate@yatra.ai');
+      localStorage.setItem('guest_name', 'Student');
+    });
+  });
+
   test('1. Avatar: mr-vinodh.png file exists on disk and is loaded as 3D avatar', async ({ page }) => {
     // Verify file on disk
     const avatarPath = path.resolve(process.cwd(), 'public', 'avatars', 'mr-vinodh.png');
@@ -52,7 +61,7 @@ test.describe('VR Interview Acceptance Suite', () => {
   test('2. Voice: Configured provider (Gemini Live Charon male voice) and audio endpoints', async ({ page }) => {
     // 1. Verify backend token endpoint responds with valid ephemeral token
     const tokenRes = await page.request.post('http://localhost:3000/api/interview/live-token', {
-      headers: { 'Authorization': 'Bearer test-token' }
+      headers: { 'Authorization': 'Bearer guest_test_token' }
     });
     expect(tokenRes.ok()).toBeTruthy();
     const tokenData = await tokenRes.json();
@@ -63,6 +72,13 @@ test.describe('VR Interview Acceptance Suite', () => {
     // 2. Load VR interview and verify voice status and male voice fallback
     await page.goto('/interview?company=Google&role=Software%20Engineer&vr=true');
     await page.waitForLoadState('domcontentloaded');
+
+    // Dismiss pre-interview modal if shown
+    const startModalBtn = page.getByRole("button", { name: /Start Placement Interview|Resume Interview/i });
+    if (await startModalBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
+      await startModalBtn.click();
+      await expect(startModalBtn).toBeHidden({ timeout: 5000 });
+    }
 
     // Evaluate client voice synthesis configuration
     const synthInfo = await page.evaluate(() => {
@@ -89,6 +105,12 @@ test.describe('VR Interview Acceptance Suite', () => {
     // 2. Open VR interview with this setId
     await page.goto(`/interview?setId=${setId}&company=Google&role=Full%20Stack%20Engineer&vr=true`);
     await page.waitForLoadState('domcontentloaded');
+
+    // Dismiss pre-interview modal
+    const startModalBtn = page.getByRole("button", { name: /Start Placement Interview|Resume Interview/i });
+    await expect(startModalBtn).toBeVisible({ timeout: 15000 });
+    await startModalBtn.click();
+    await expect(startModalBtn).toBeHidden({ timeout: 10000 });
 
     // Verify Question ID in VR HUD matches Q001
     await expect(page.locator('text=Q001').first()).toBeVisible({ timeout: 15000 });
@@ -124,15 +146,22 @@ test.describe('VR Interview Acceptance Suite', () => {
     }, { timeout: 15000 }).toBeGreaterThan(0);
 
     // 5. Verify server session endpoint persistence
-    const serverSessRes = await page.request.get(`http://localhost:3000/api/interview/session/by-set/${setId}`);
-    expect(serverSessRes.ok()).toBeTruthy();
-    const serverSession = await serverSessRes.json();
-    expect(serverSession.answers['Q001']).toContain('topological sort');
+    await expect.poll(async () => {
+      const res = await page.request.get(`http://localhost:3000/api/interview/session/by-set/${setId}`);
+      if (!res.ok()) return false;
+      const data = await res.json();
+      return Boolean(data?.answers?.['Q001']?.includes('topological sort'));
+    }, { timeout: 10000 }).toBeTruthy();
   });
 
   test('4. Microphone and Echo: Denial handling and feedback-loop suppression', async ({ page }) => {
     await page.goto('/interview?company=Google&role=Software%20Engineer&vr=true');
     await page.waitForLoadState('domcontentloaded');
+
+    const startModalBtn = page.getByRole("button", { name: /Start Placement Interview|Resume Interview/i });
+    await expect(startModalBtn).toBeVisible({ timeout: 15000 });
+    await startModalBtn.click();
+    await expect(startModalBtn).toBeHidden({ timeout: 10000 });
 
     // Verify mic toggle exists in VR HUD
     const micBtn = page.locator('button:has-text("MUTED"), button:has-text("MIC ON")').first();
@@ -254,6 +283,11 @@ test.describe('VR Interview Acceptance Suite', () => {
     await page.goto('/interview?company=Amazon&role=Cloud%20Architect&vr=true');
     await page.waitForLoadState('domcontentloaded');
 
+    const startModalBtn = page.getByRole("button", { name: /Start Placement Interview|Resume Interview/i });
+    await expect(startModalBtn).toBeVisible({ timeout: 15000 });
+    await startModalBtn.click();
+    await expect(startModalBtn).toBeHidden({ timeout: 10000 });
+
     // 1. Verify 3D scene renders
     await expect(page.locator('a-scene')).toBeAttached({ timeout: 15000 });
 
@@ -274,14 +308,19 @@ test.describe('VR Interview Acceptance Suite', () => {
     await page.goto('/interview?company=Google&role=Software%20Engineer&vr=true');
     await page.waitForLoadState('domcontentloaded');
 
+    const startModalBtn = page.getByRole("button", { name: /Start Placement Interview|Resume Interview/i });
+    await expect(startModalBtn).toBeVisible({ timeout: 15000 });
+    await startModalBtn.click();
+    await expect(startModalBtn).toBeHidden({ timeout: 10000 });
+
     // Click Settings -> Enter VR
     const settingsBtn = page.locator('button:has-text("Settings")').first();
     await expect(settingsBtn).toBeVisible({ timeout: 10000 });
-    await settingsBtn.click({ force: true });
+    await settingsBtn.click();
 
     const enterVRBtn = page.locator('button:has-text("Enter VR")').first();
     await expect(enterVRBtn).toBeVisible({ timeout: 10000 });
-    await enterVRBtn.click({ force: true });
+    await enterVRBtn.click();
 
     // Verify graceful handling: in environment without OpenXR runtime, actionable message is shown or scene stays interactive
     const errorMessage = page.locator('text=/WebXR is not supported|continue in the 3D desktop room/i').first();

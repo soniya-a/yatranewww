@@ -1,7 +1,12 @@
 import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
+import { ClerkProvider } from '@clerk/react';
 import App from './App.tsx';
 import './index.css';
+
+const CLERK_PUBLISHABLE_KEY =
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_CLERK_PUBLISHABLE_KEY) ||
+  "pk_test_d2VsY29tZWQtZWVsLTY0NDguY2xlcmsuYWNjb3VudHMuZGV2JA";
 
 // Anti-circular safety console wrapper to protect external test runner telemetry from JSON.stringify failures
 (function() {
@@ -189,8 +194,19 @@ import './index.css';
 })();
 
 createRoot(document.getElementById('root')!).render(
-  
+  CLERK_PUBLISHABLE_KEY ? (
+    <ClerkProvider
+      publishableKey={CLERK_PUBLISHABLE_KEY}
+      afterSignOutUrl="/"
+      signInUrl="/"
+      signUpUrl="/sign-up"
+      signInFallbackRedirectUrl="/"
+      signUpFallbackRedirectUrl="/"
+    >
+      <App />
+    </ClerkProvider>
+  ) : (
     <App />
-  ,
+  )
 );
 

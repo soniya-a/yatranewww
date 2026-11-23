@@ -146,11 +146,14 @@ export interface CanonicalInterviewQuestion {
   question_text: string;
   company: string;
   role: string;
+  branch?: string;           // e.g. "EEE", "ECE", "CSE", "Mechanical", "Civil"
   round: InterviewRoundName | string;
   category: QuestionCategory;
   confidence: ConfidenceLevel;
   freshness?: FreshnessWindow | string;
   relevance_score: number;   // 0 - 100
+  requires_coding?: boolean; // Strictly true ONLY when question explicitly requires writing code or an SQL query
+  coding_language?: string;  // e.g. "python", "sql", "c", "cpp", "javascript", "java"
   
   // Specific metadata based on category
   source?: ReportedQuestionSource | OfficialDerivedSource | null;
@@ -167,6 +170,8 @@ export interface CanonicalInterviewQuestion {
   canonical_title?: string;
   evidence_list?: QuestionEvidence[];
   independent_reports_count?: number;
+  frequency_3m?: number;
+  frequency_6m?: number;
   slot_number?: number;      // 1 to 10
 
   // ── Round-Specific Assessment & Evaluation Criteria ─────────────────────────
@@ -220,6 +225,7 @@ export interface InterviewQuestionSet {
 export interface CanonicalQuestionGenerationInput {
   company: string;
   role: string;
+  branch?: string | null;     // Optional explicit engineering branch
   roundName?: string | null;  // e.g. 'Online Assessment', 'Technical DSA', 'System Design', 'Behavioral & Leadership'
   jobDescription?: string | null;
   parsedResume?: any;        // Full parsed resume object from Resume Intelligence
@@ -351,18 +357,30 @@ export interface RubricCriterionScore {
 export interface QuestionEvaluation {
   question_id: string;              // e.g. "Q001"
   canonical_title: string;
+  question_text?: string;
   round: string;
   category: QuestionCategory;
   candidate_answer: string;
+  submitted_code?: string;
+  code_execution_result?: {
+    status: 'passed' | 'error' | 'not_run';
+    language: string;
+    output: string;
+    error?: string;
+  };
   is_answered: boolean;
+  answer_status?: 'correct' | 'partially_correct' | 'incorrect' | 'unanswered';
   score: number;                     // 0 - 100
   max_score: number;                 // 100
+  marks_awarded?: number;            // 0 - 100
+  marks_deducted?: number;           // 0 - 100
   verdict: 'Excellent' | 'Good' | 'Average' | 'Weak' | 'Unanswered';
   rubric_breakdown?: RubricCriterionScore[];
   strengths: string[];
   missing_concepts: string[];
   feedback: string;
   expected_answer_summary?: string;
+  code_evaluation_note?: string;
 }
 
 export interface RoundScorecardDimensions {
@@ -392,6 +410,50 @@ export interface RecommendedRoadmapItem {
   resources: string[];
 }
 
+export interface ProctoringEventLog {
+  timestamp: number;
+  iso_time?: string;
+  event_type: string;
+  duration_ms?: number;
+  details?: string;
+}
+
+export interface ProctoringReport {
+  observed_events: {
+    camera_permission: string;
+    screen_share_permission: string;
+    screen_share_active: boolean;
+    face_present_checks: number;
+    face_missing_count: number;
+    face_missing_duration_ms: number;
+    multiple_faces_count: number;
+    head_movement_count: number;
+    camera_disconnect_count: number;
+    screen_share_interruptions: number;
+    tab_switch_count: number;
+    tab_hidden_duration_ms: number;
+    total_interruptions: number;
+    event_timeline: ProctoringEventLog[];
+  };
+  interpretation: {
+    integrity_status: 'Clean Session' | 'Minor Interruptions Observed' | 'Review Recommended';
+    head_movement_note: string;
+    phone_detection_note: string;
+    summary: string;
+  };
+}
+
+export interface ReportSummaryMetrics {
+  total_questions_asked: number;
+  correct_count: number;
+  partially_correct_count: number;
+  incorrect_count: number;
+  unanswered_count: number;
+  total_marks_awarded: number;
+  total_marks_deducted: number;
+  total_max_marks: number;
+}
+
 export interface InterviewAssessmentReport {
   id: string;                        // e.g. "RPT_AMZ_1730000000"
   session_id: string;
@@ -404,12 +466,19 @@ export interface InterviewAssessmentReport {
   overall_grade: 'A+' | 'A' | 'B+' | 'B' | 'C' | 'D';
   hiring_decision: 'Strong Hire' | 'Hire' | 'Lean Hire' | 'Hold' | 'Reject';
   hiring_summary: string;
+  summary_metrics?: ReportSummaryMetrics;
   round_scorecards: Record<string, RoundScorecard>;
   question_evaluations: QuestionEvaluation[];
   strongest_skills: string[];
   weakest_skills: string[];
   critical_skill_gaps: string[];
   recommended_roadmap: RecommendedRoadmapItem[];
+  proctoring_report?: ProctoringReport;
+  coding_execution_capabilities?: {
+    sandbox_available: boolean;
+    evaluation_mode: string;
+    note: string;
+  };
   interview_mode: 'normal' | 'vr';
   created_at: string;
   updated_at?: string;
@@ -421,11 +490,15 @@ export interface InterviewEvaluationInput {
   questionSetId: string;
   userId?: string;
   sessionToken?: string;
+  authToken?: string;
   company: string;
   role: string;
   answers: Record<string, string>;
   codeAnswers?: Record<string, string>;
+  codeExecutionResults?: Record<string, { status: 'passed' | 'error' | 'not_run'; language: string; output: string; error?: string }>;
   chatHistory?: Array<{ role: string; text: string; question_id?: string }>;
+  behaviorLogs?: Array<{ timestamp: number; marker: string; confidence?: number; durationMs?: number; details?: string }>;
+  proctoringTelemetry?: any;
   parsedResume?: any;
   interviewMode?: 'normal' | 'vr';
 }

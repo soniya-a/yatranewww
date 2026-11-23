@@ -45,6 +45,28 @@ export const QuestionSourceCard: React.FC<QuestionSourceCardProps> = ({
       {/* 1. REPORTED EVIDENCE */}
       {category === 'REPORTED' && (
         <div className="space-y-3 text-xs">
+          {/* Real 3-month and 6-month frequencies + Deduplicated reports count */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 p-2.5 bg-emerald-50/70 border border-emerald-200 rounded-lg text-center">
+            <div className="flex flex-col">
+              <span className="text-[10px] text-emerald-700 font-semibold uppercase tracking-wider">3-Month Freq</span>
+              <span className="text-xs font-bold text-emerald-950 font-mono">
+                {question.frequency_3m !== undefined ? `${question.frequency_3m} ${question.frequency_3m === 1 ? 'report' : 'reports'}` : '1 report'}
+              </span>
+            </div>
+            <div className="flex flex-col">
+              <span className="text-[10px] text-emerald-700 font-semibold uppercase tracking-wider">6-Month Freq</span>
+              <span className="text-xs font-bold text-emerald-950 font-mono">
+                {question.frequency_6m !== undefined ? `${question.frequency_6m} ${question.frequency_6m === 1 ? 'report' : 'reports'}` : '1 report'}
+              </span>
+            </div>
+            <div className="col-span-2 sm:col-span-1 flex flex-col justify-center">
+              <span className="text-[10px] text-emerald-700 font-semibold uppercase tracking-wider">Unique Reports</span>
+              <span className="text-xs font-bold text-emerald-950 font-mono">
+                {question.independent_reports_count || question.evidence_list?.length || 1} confirmed
+              </span>
+            </div>
+          </div>
+
           {question.evidence_list && question.evidence_list.length > 0 ? (
             <div>
               <div className="flex items-center justify-between gap-2 mb-2">
@@ -152,11 +174,11 @@ export const QuestionSourceCard: React.FC<QuestionSourceCardProps> = ({
               <div className="flex items-center gap-4 flex-wrap text-gray-600 pt-1">
                 <div className="flex items-center gap-1">
                   <Calendar className="w-3.5 h-3.5 text-gray-400" />
-                  <span>Published: {source?.published_date || '2024-12-10'}</span>
+                  <span>Published: {source?.published_date || 'Recent'}</span>
                 </div>
                 <div className="flex items-center gap-1">
                   <UserCheck className="w-3.5 h-3.5 text-gray-400" />
-                  <span>Interview Date: {source?.interview_date || 'Not available'}</span>
+                  <span>Interview Date: {source?.interview_date || 'Not reported'}</span>
                 </div>
               </div>
 
@@ -234,18 +256,23 @@ export const QuestionSourceCard: React.FC<QuestionSourceCardProps> = ({
 
       {/* 4. AI-PREDICTED EVIDENCE */}
       {category === 'AI_PREDICTED' && (
-        <div className="space-y-1.5 text-xs">
-          <div className="flex items-center gap-1.5 font-bold text-amber-800">
-            <Sparkles className="w-4 h-4 text-amber-600" />
-            <span>AI PREDICTED</span>
+        <div className="space-y-2 text-xs">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5 font-bold text-amber-800">
+              <Sparkles className="w-4 h-4 text-amber-600" />
+              <span>AI PREDICTED</span>
+            </div>
+            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
+              Zero Fabricated Reports
+            </span>
           </div>
-          <p className="text-gray-600 text-[11px] leading-relaxed">
-            Synthesized dynamically by the Interview Intelligence Engine based on:
+          <p className="text-gray-700 text-xs leading-relaxed">
+            Synthesized dynamically by Gemini AI for <strong className="text-gray-900">{targetCompany}</strong> - <strong className="text-gray-900">{targetRole}</strong>.
           </p>
           <ul className="list-disc list-inside text-gray-600 text-[11px] space-y-0.5 pl-1">
-            <li>Target Company: <strong className="text-gray-800">{targetCompany}</strong></li>
-            <li>Role Competency Framework: <strong className="text-gray-800">{targetRole}</strong></li>
-            <li>Real-world interview trends & situational trade-offs</li>
+            <li>Grounded in target company engineering practices</li>
+            <li>Calibrated to role seniority and verified technical focus</li>
+            <li>No artificial candidate reports or fabricated community URLs</li>
           </ul>
           {predMeta?.reason_generated && (
             <p className="text-gray-500 text-[11px] italic pt-1 border-t border-gray-200/60 mt-1">

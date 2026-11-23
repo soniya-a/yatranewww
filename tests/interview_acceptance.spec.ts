@@ -14,9 +14,24 @@ import { test, expect } from "@playwright/test";
 test.describe("Phase 4: Normal Interview Flow", () => {
   test.setTimeout(90000);
 
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem('guest_session', 'true');
+      localStorage.setItem('guest_uid', 'test-direct-user');
+      localStorage.setItem('guest_email', 'direct-candidate@yatra.ai');
+      localStorage.setItem('guest_name', 'Student');
+    });
+  });
+
   test("Normal interview loads selected company/role, renders canonical question, and advances on answer", async ({ page }) => {
     // 1. Navigate to interview with selected company and role
     await page.goto("/interview?company=Tech+Mahindra&role=AI%2FML+Software+Engineer&vr=false");
+
+    // Dismiss Pre-Interview Instructions modal if shown
+    const startModalBtn = page.getByRole("button", { name: /Start Placement Interview|Resume Interview/i });
+    if (await startModalBtn.isVisible({ timeout: 6000 }).catch(() => false)) {
+      await startModalBtn.click();
+    }
 
     // 2. Verify header displays company and role
     await expect(page.getByText("Tech Mahindra").first()).toBeVisible({ timeout: 15000 });
@@ -47,7 +62,7 @@ test.describe("Phase 4: Normal Interview Flow", () => {
     // Check that question index advanced (e.g. "Question 2" or next question in queue)
     await page.waitForTimeout(2000);
     const answersInStorage = await page.evaluate(() => {
-      const keys = Object.keys(localStorage).filter(k => k.startsWith('interview_session_'));
+      const keys = Object.keys(localStorage).filter(k => k.startsWith('interview_session_') && !k.includes('_token_'));
       if (keys.length > 0) {
         return localStorage.getItem(keys[0]);
       }

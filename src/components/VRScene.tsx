@@ -77,29 +77,12 @@ export const VRScene = memo(({
     }
   }, [provenanceBadge, formattedQuestionText, isSceneMounted]);
 
-  // Update Mr. Vinodh's avatar speaking animation and visual focus dynamically
+  // The interviewer remains seated silently in one fixed position without forward/backward movement, oscillation or gestures
   useEffect(() => {
     const avatarEl = document.getElementById('mr-vinodh-avatar');
-    const speechIndicator = document.getElementById('speech-indicator');
     if (!avatarEl) return;
-
-    if (avatarState === 'speaking') {
-      avatarEl.setAttribute('animation__speech', 'property: scale; to: 1.025 1.025 1.025; dir: alternate; dur: 380; loop: true; easing: easeInOutQuad');
-      avatarEl.setAttribute('animation__bob', 'property: position; to: 0 1.405 0.02; dir: alternate; dur: 380; loop: true; easing: easeInOutQuad');
-      if (speechIndicator) speechIndicator.setAttribute('visible', 'true');
-    } else if (avatarState === 'listening') {
-      avatarEl.removeAttribute('animation__speech');
-      avatarEl.removeAttribute('animation__bob');
-      avatarEl.setAttribute('scale', '0.99 0.99 0.99');
-      avatarEl.setAttribute('position', '0 1.385 0.02');
-      if (speechIndicator) speechIndicator.setAttribute('visible', 'false');
-    } else {
-      avatarEl.removeAttribute('animation__speech');
-      avatarEl.removeAttribute('animation__bob');
-      avatarEl.setAttribute('scale', '1 1 1');
-      avatarEl.setAttribute('position', '0 1.39 0.02');
-      if (speechIndicator) speechIndicator.setAttribute('visible', 'false');
-    }
+    avatarEl.setAttribute('scale', '1 1 1');
+    avatarEl.setAttribute('position', '0 1.39 0.02');
   }, [avatarState]);
 
   // Mount 3D Scene once and clean up WebGL on unmount to prevent leaks
@@ -136,7 +119,7 @@ export const VRScene = memo(({
         <a-scene
           embedded
           vr-mode-ui="enabled: true"
-          renderer="antialias: true; colorManagement: true; physicallyCorrectLights: true; alpha: false"
+          renderer="antialias: true; colorManagement: true; physicallyCorrectLights: false; alpha: false"
           class="absolute inset-0 w-full h-full z-0"
         >
           {/* ASSET MANAGEMENT SYSTEM */}
@@ -146,7 +129,12 @@ export const VRScene = memo(({
             <img id="img-tablet" src="/assets/tablet_notes.jpg" crossOrigin="anonymous" />
             <img id="img-resume" src="/assets/resume_sheet.jpg" crossOrigin="anonymous" />
             <img id="img-nameplate" src="/assets/nameplate_vinodh.png" crossOrigin="anonymous" />
+            <img id="img-art-city" src="/yatra_hero.jpg" crossOrigin="anonymous" />
+            <img id="img-art-arch" src="/yatra_roadmap.jpg" crossOrigin="anonymous" />
           </a-assets>
+
+          {/* BRIGHT DAYLIGHT SKY DOME (Ensures zero grey/black voids anywhere in 360° VR view) */}
+          <a-sky color="#dbeafe"></a-sky>
 
           {/* DYNAMIC CANDIDATE SEATED CAMERA RIG */}
           {/* DYNAMIC CANDIDATE SEATED CAMERA RIG (Matches Reference Perspective) */}
@@ -176,80 +164,57 @@ export const VRScene = memo(({
             <a-box position="0 0.45 0" width="0.58" height="0.07" depth="0.52" color="#09090b" material="roughness: 0.7"></a-box>
           </a-entity>
 
-          {/* CANDIDATE FIRST-PERSON VR HANDS & SUIT SLEEVES (Resting Naturally Over Desk Mat) */}
-          <a-entity id="candidate-hands" position="0 0 0">
-            {/* Left Forearm & Hand: Angled inward toward tablet on desk mat */}
-            <a-entity position="-0.26 0.772 -0.05">
-              {/* Suit Sleeve (Charcoal Navy Business Suit) */}
-              <a-cylinder position="-0.04 -0.01 0.07" radius="0.046" height="0.16" rotation="75 35 -15" color="#1e293b" material="roughness: 0.85"></a-cylinder>
-              {/* Crisp White Shirt Cuff */}
-              <a-cylinder position="-0.02 0.005 0.028" radius="0.042" height="0.025" rotation="75 35 -15" color="#ffffff" material="roughness: 0.5"></a-cylinder>
-              {/* Wrist & Palm */}
-              <a-box position="0 0.012 0" width="0.08" height="0.020" depth="0.10" color="#dcb295" rotation="10 25 -10" material="roughness: 0.8"></a-box>
-              {/* Thumb */}
-              <a-cylinder position="0.045 0.014 -0.01" radius="0.008" height="0.05" rotation="15 65 10" color="#dcb295"></a-cylinder>
-              {/* Fingers extended gently over desk mat */}
-              <a-cylinder position="-0.025 0.01 -0.065" radius="0.007" height="0.05" rotation="80 20 -10" color="#dcb295"></a-cylinder>
-              <a-cylinder position="-0.008 0.01 -0.072" radius="0.007" height="0.055" rotation="80 22 -10" color="#dcb295"></a-cylinder>
-              <a-cylinder position="0.008 0.01 -0.068" radius="0.007" height="0.052" rotation="80 25 -10" color="#dcb295"></a-cylinder>
-              <a-cylinder position="0.025 0.01 -0.06" radius="0.006" height="0.045" rotation="80 28 -10" color="#dcb295"></a-cylinder>
-            </a-entity>
-
-            {/* Right Forearm & Hand: Mirrored naturally opposite left hand */}
-            <a-entity position="0.26 0.772 -0.05">
-              {/* Suit Sleeve (Charcoal Navy Business Suit) */}
-              <a-cylinder position="0.04 -0.01 0.07" radius="0.046" height="0.16" rotation="75 -35 15" color="#1e293b" material="roughness: 0.85"></a-cylinder>
-              {/* Crisp White Shirt Cuff */}
-              <a-cylinder position="0.02 0.005 0.028" radius="0.042" height="0.025" rotation="75 -35 15" color="#ffffff" material="roughness: 0.5"></a-cylinder>
-              {/* Wrist & Palm */}
-              <a-box position="0 0.012 0" width="0.08" height="0.020" depth="0.10" color="#dcb295" rotation="10 -25 10" material="roughness: 0.8"></a-box>
-              {/* Thumb */}
-              <a-cylinder position="-0.045 0.014 -0.01" radius="0.008" height="0.05" rotation="15 -65 -10" color="#dcb295"></a-cylinder>
-              {/* Fingers extended gently over desk mat */}
-              <a-cylinder position="0.025 0.01 -0.065" radius="0.007" height="0.05" rotation="80 -20 10" color="#dcb295"></a-cylinder>
-              <a-cylinder position="0.008 0.01 -0.072" radius="0.007" height="0.055" rotation="80 -22 10" color="#dcb295"></a-cylinder>
-              <a-cylinder position="-0.008 0.01 -0.068" radius="0.007" height="0.052" rotation="80 -25 10" color="#dcb295"></a-cylinder>
-              <a-cylinder position="-0.025 0.01 -0.06" radius="0.006" height="0.045" rotation="80 -28 10" color="#dcb295"></a-cylinder>
-            </a-entity>
-          </a-entity>
+          {/* ═══════════════════════════════════════════════════════════════
+              BRIGHT NATURAL DAYLIGHT & SOFT WHITE INTERIOR LIGHTING
+          ═══════════════════════════════════════════════════════════════ */}
+          <a-light type="ambient" color="#ffffff" intensity="1.15"></a-light>
+          <a-light type="hemisphere" color="#ffffff" groundColor="#cbd5e1" intensity="0.65"></a-light>
+          {/* Natural white daylight from panoramic window */}
+          <a-light type="directional" color="#ffffff" intensity="0.85" position="0 4.0 -3.5"></a-light>
+          {/* Soft white interior ceiling light illuminating interviewer, walls, and desk */}
+          <a-light type="directional" color="#fffdf9" intensity="0.75" position="0 3.5 2.5"></a-light>
+          <a-light type="point" color="#ffffff" intensity="0.55" position="-2.2 2.8 -0.8"></a-light>
+          <a-light type="point" color="#ffffff" intensity="0.55" position="2.2 2.8 -0.8"></a-light>
 
           {/* ═══════════════════════════════════════════════════════════════
-              LIGHTING & REALISTIC EXECUTIVE OFFICE AMBIENCE
+              GENUINE 3D OFFICE ROOM GEOMETRY (Bright Corporate Executive Suite)
           ═══════════════════════════════════════════════════════════════ */}
-          <a-light type="ambient" color="#f8fafc" intensity="0.95"></a-light>
-          <a-light type="directional" color="#ffffff" intensity="0.9" position="-3 5 -2"></a-light>
-          <a-light type="directional" color="#fffbf5" intensity="0.6" position="3 4 2"></a-light>
+          {/* Floor: Bright Warm Executive Stone-Slate Carpet (#64748b) with Designer Under-Desk Area Rug */}
+          <a-plane position="0 0 0" rotation="-90 0 0" width="28" height="28" color="#64748b" material="roughness: 0.85; metalness: 0.05"></a-plane>
+          <a-plane position="0 0.012 -0.75" rotation="-90 0 0" width="4.6" height="3.6" color="#cbd5e1" material="roughness: 0.8"></a-plane>
+          <a-plane position="0 0.022 -0.75" rotation="-90 0 0" width="4.3" height="3.3" color="#e2e8f0" material="roughness: 0.85"></a-plane>
+
+          {/* Ceiling: Crisp Pure White Executive Ceiling (#ffffff) */}
+          <a-plane position="0 3.2 0" rotation="90 0 0" width="8.6" height="8.0" color="#ffffff" material="roughness: 0.7"></a-plane>
+
+          {/* Architectural Drop-Ceiling LED Daylight Panels */}
+          <a-plane position="-1.5 3.19 -1.0" rotation="90 0 0" width="1.6" height="0.6" color="#ffffff" material="shader: flat"></a-plane>
+          <a-box position="-1.5 3.195 -1.0" width="1.64" height="0.02" depth="0.64" color="#cbd5e1" material="metalness: 0.5"></a-box>
+          <a-plane position="1.5 3.19 -1.0" rotation="90 0 0" width="1.6" height="0.6" color="#ffffff" material="shader: flat"></a-plane>
+          <a-box position="1.5 3.195 -1.0" width="1.64" height="0.02" depth="0.64" color="#cbd5e1" material="metalness: 0.5"></a-box>
+          <a-plane position="-1.5 3.19 1.4" rotation="90 0 0" width="1.6" height="0.6" color="#ffffff" material="shader: flat"></a-plane>
+          <a-box position="-1.5 3.195 1.4" width="1.64" height="0.02" depth="0.64" color="#cbd5e1" material="metalness: 0.5"></a-box>
+          <a-plane position="1.5 3.19 1.4" rotation="90 0 0" width="1.6" height="0.6" color="#ffffff" material="shader: flat"></a-plane>
+          <a-box position="1.5 3.195 1.4" width="1.64" height="0.02" depth="0.64" color="#cbd5e1" material="metalness: 0.5"></a-box>
+
+          {/* Front Wall (behind candidate, enclosing office in warm corporate alabaster) */}
+          <a-box position="0 1.6 4.2" width="8.6" height="3.2" depth="0.1" color="#f8fafc" material="roughness: 0.75"></a-box>
+          <a-box position="0 1.35 4.14" width="1.5" height="2.6" depth="0.04" color="#7a4f31" material="roughness: 0.55"></a-box>
+          <a-box position="0 0.06 4.15" width="8.4" height="0.12" depth="0.03" color="#7a4f31" material="roughness: 0.55"></a-box>
+
+          {/* Clean Warm-Walnut Corner Trim Columns (Sealing all 4 room corners without dark/black blocks) */}
+          <a-box position="-4.16 1.6 -3.76" width="0.12" height="3.2" depth="0.12" color="#7a4f31" material="roughness: 0.5; metalness: 0.1"></a-box>
+          <a-box position="4.16 1.6 -3.76" width="0.12" height="3.2" depth="0.12" color="#7a4f31" material="roughness: 0.5; metalness: 0.1"></a-box>
+          <a-box position="-4.16 1.6 4.16" width="0.12" height="3.2" depth="0.12" color="#7a4f31" material="roughness: 0.5; metalness: 0.1"></a-box>
+          <a-box position="4.16 1.6 4.16" width="0.12" height="3.2" depth="0.12" color="#7a4f31" material="roughness: 0.5; metalness: 0.1"></a-box>
 
           {/* ═══════════════════════════════════════════════════════════════
-              GENUINE 3D OFFICE ROOM GEOMETRY (Enclosed Seamless Office)
+              RIGHT WALL: WARM VERTICAL WALNUT WOOD SLAT ARCHITECTURE & FRAMED CITY PHOTOGRAPHY
           ═══════════════════════════════════════════════════════════════ */}
-          {/* Floor: Dark Executive Carpet (#1e293b / slate charcoal - Expanded 28x28) */}
-          <a-plane position="0 0 0" rotation="-90 0 0" width="28" height="28" color="#1e293b" material="roughness: 0.95; metalness: 0.05"></a-plane>
+          <a-box position="4.2 1.6 0" width="0.1" height="3.2" depth="8.4" color="#6d4427" material="roughness: 0.6"></a-box>
+          <a-box position="4.15 0.06 0" width="0.04" height="0.12" depth="8.4" color="#5c371d" material="roughness: 0.5"></a-box>
 
-          {/* Ceiling: Clean Executive White (#f8fafc - Expanded 28x28) */}
-          <a-plane position="0 3.2 0" rotation="90 0 0" width="28" height="28" color="#f1f5f9" material="roughness: 0.9"></a-plane>
-
-          {/* Architectural Drop-Ceiling LED Lighting Panels */}
-          <a-plane position="-1.5 3.19 -1.0" rotation="90 0 0" width="1.6" height="0.6" color="#ffffff" material="shader: flat; opacity: 0.95"></a-plane>
-          <a-box position="-1.5 3.195 -1.0" width="1.64" height="0.02" depth="0.64" color="#334155" material="metalness: 0.8"></a-box>
-          <a-plane position="1.5 3.19 -1.0" rotation="90 0 0" width="1.6" height="0.6" color="#ffffff" material="shader: flat; opacity: 0.95"></a-plane>
-          <a-box position="1.5 3.195 -1.0" width="1.64" height="0.02" depth="0.64" color="#334155" material="metalness: 0.8"></a-box>
-          <a-plane position="-1.5 3.19 1.4" rotation="90 0 0" width="1.6" height="0.6" color="#ffffff" material="shader: flat; opacity: 0.95"></a-plane>
-          <a-box position="-1.5 3.195 1.4" width="1.64" height="0.02" depth="0.64" color="#334155" material="metalness: 0.8"></a-box>
-          <a-plane position="1.5 3.19 1.4" rotation="90 0 0" width="1.6" height="0.6" color="#ffffff" material="shader: flat; opacity: 0.95"></a-plane>
-          <a-box position="1.5 3.195 1.4" width="1.64" height="0.02" depth="0.64" color="#334155" material="metalness: 0.8"></a-box>
-
-          {/* Front Wall (behind candidate, enclosing office) */}
-          <a-box position="0 1.6 4.2" width="12" height="3.2" depth="0.1" color="#f1f5f9" material="roughness: 0.9"></a-box>
-          <a-box position="0 1.6 4.14" width="1.6" height="2.4" depth="0.04" color="#334155" material="metalness: 0.5"></a-box>
-          <a-box position="0 1.6 4.14" width="1.45" height="2.25" depth="0.02" color="#cbd5e1" material="opacity: 0.45; transparent: true"></a-box>
-
-          {/* ═══════════════════════════════════════════════════════════════
-              RIGHT WALL: WARM VERTICAL WALNUT WOOD SLAT ARCHITECTURE
-          ═══════════════════════════════════════════════════════════════ */}
-          <a-box position="4.2 1.6 0" width="0.1" height="3.2" depth="8.4" color="#422513" material="roughness: 0.7"></a-box>
-
-          {/* Vertical Walnut Slat Ribs */}
+          {/* Vertical Warm Walnut Slat Ribs */}
           {Array.from({ length: 42 }).map((_, i) => {
             const zPos = -3.7 + i * 0.18;
             return (
@@ -259,92 +224,133 @@ export const VRScene = memo(({
                 width="0.04" 
                 height="3.2" 
                 depth="0.09" 
-                color="#6d4427" 
-                material="roughness: 0.55; metalness: 0.05"
+                color="#8a5a38" 
+                material="roughness: 0.5; metalness: 0.05"
               ></a-box>
             );
           })}
 
-          {/* Framed Executive Artwork on Right Walnut Wall */}
-          <a-entity position="4.08 1.8 -0.8" rotation="0 -90 0">
-            <a-box position="0 0 0" width="1.3" height="1.6" depth="0.03" color="#0f172a" material="metalness: 0.8; roughness: 0.3"></a-box>
-            <a-plane position="0 0 0.018" width="1.18" height="1.48" color="#f8fafc"></a-plane>
-            <a-plane position="0 0 0.02" width="0.95" height="1.2" color="#1e293b" material="shader: flat">
-              <a-ring position="0 0 0.005" radius-inner="0.25" radius-outer="0.26" color="#38bdf8"></a-ring>
-              <a-plane position="0 0 0.006" width="0.6" height="0.01" color="#f59e0b" rotation="0 0 35"></a-plane>
-            </a-plane>
+          {/* Framed Modern World-City Photography on Right Walnut Wall (No black rectangles) */}
+          <a-entity position="4.09 1.72 -1.1" rotation="0 -90 0">
+            {/* Warm Brushed Bronze/Walnut Gallery Frame */}
+            <a-box position="0 0 0" width="1.65" height="1.15" depth="0.03" color="#5c371d" material="roughness: 0.4; metalness: 0.2"></a-box>
+            {/* Crisp White Museum Matboard */}
+            <a-plane position="0 0 0.017" width="1.52" height="1.02" color="#ffffff" material="shader: flat"></a-plane>
+            {/* Inner Gold Accent Bevel */}
+            <a-plane position="0 0 0.019" width="1.36" height="0.86" color="#d97706" material="shader: flat"></a-plane>
+            {/* World-City Panoramic Skyline Photography Print */}
+            <a-plane position="0 0 0.021" width="1.33" height="0.83" src="#img-skyline" material="shader: flat"></a-plane>
+          </a-entity>
+
+          {/* Second Framed Corporate Architectural Artwork on Right Walnut Wall */}
+          <a-entity position="4.09 1.72 1.1" rotation="0 -90 0">
+            <a-box position="0 0 0" width="1.45" height="1.15" depth="0.03" color="#5c371d" material="roughness: 0.4; metalness: 0.2"></a-box>
+            <a-plane position="0 0 0.017" width="1.32" height="1.02" color="#ffffff" material="shader: flat"></a-plane>
+            <a-plane position="0 0 0.019" width="1.18" height="0.88" color="#d97706" material="shader: flat"></a-plane>
+            <a-plane position="0 0 0.021" width="1.15" height="0.85" src="#img-art-city" material="shader: flat"></a-plane>
           </a-entity>
 
           {/* ═══════════════════════════════════════════════════════════════
-              LEFT WALL: FLOOR-TO-CEILING GLASS ARCHITECTURE & INDOOR PLANT
+              LEFT WALL: FINISHED CORPORATE GALLERY WALL, FRAMED ARTWORK & INDOOR PLANT
+              (Replaces unfinished grey hallway slab and floating blue panel)
           ═══════════════════════════════════════════════════════════════ */}
-          <a-box position="-4.2 1.6 0" width="0.04" height="3.2" depth="8.4" color="#e0f2fe" material="opacity: 0.18; transparent: true; roughness: 0.05; metalness: 0.9"></a-box>
-          {[-3.0, -1.5, 0, 1.5, 3.0].map((z, idx) => (
-            <a-box 
-              key={`left-mullion-${idx}`} 
-              position={`-4.18 1.6 ${z}`} 
-              width="0.08" 
-              height="3.2" 
-              depth="0.08" 
-              color="#18181b" 
-              material="metalness: 0.8; roughness: 0.3"
-            ></a-box>
-          ))}
+          {/* Main Finished Warm Alabaster Corporate Wall */}
+          <a-box position="-4.2 1.6 0" width="0.1" height="3.2" depth="8.4" color="#f8fafc" material="roughness: 0.7"></a-box>
+          {/* Lower Warm Walnut Wainscot Trim Panel & Baseboard */}
+          <a-box position="-4.14 0.42 0" width="0.03" height="0.84" depth="8.2" color="#8a5a38" material="roughness: 0.55"></a-box>
+          <a-box position="-4.13 0.85 0" width="0.05" height="0.04" depth="8.2" color="#5c371d" material="roughness: 0.45"></a-box>
+          <a-box position="-4.13 0.06 0" width="0.05" height="0.12" depth="8.2" color="#5c371d" material="roughness: 0.45"></a-box>
+          {/* Upper Crown Molding Trim */}
+          <a-box position="-4.13 3.14 0" width="0.05" height="0.08" depth="8.2" color="#e2e8f0" material="roughness: 0.6"></a-box>
 
-          {/* Executive Hallway Interior (Seen through left glass partition) */}
-          <a-box position="-6.4 1.6 0" width="0.1" height="3.2" depth="12" color="#e2e8f0" material="roughness: 0.9"></a-box>
-          <a-plane position="-5.3 1.8 -1.2" rotation="0 90 0" width="1.2" height="1.5" color="#0284c7" material="shader: flat"></a-plane>
+          {/* Framed Architectural Artwork 1 on Left Wall (Flush-mounted, no floating panels) */}
+          <a-entity position="-4.12 1.82 -1.45" rotation="0 90 0">
+            <a-box position="0 0 0" width="1.65" height="1.12" depth="0.03" color="#5c371d" material="roughness: 0.4; metalness: 0.2"></a-box>
+            <a-plane position="0 0 0.017" width="1.52" height="0.99" color="#ffffff" material="shader: flat"></a-plane>
+            <a-plane position="0 0 0.019" width="1.38" height="0.85" color="#0284c7" material="shader: flat"></a-plane>
+            <a-plane position="0 0 0.021" width="1.35" height="0.82" src="#img-skyline" material="shader: flat"></a-plane>
+          </a-entity>
+
+          {/* Framed Corporate Horizon Painting 2 on Left Wall (Flush-mounted) */}
+          <a-entity position="-4.12 1.82 0.75" rotation="0 90 0">
+            <a-box position="0 0 0" width="1.55" height="1.12" depth="0.03" color="#5c371d" material="roughness: 0.4; metalness: 0.2"></a-box>
+            <a-plane position="0 0 0.017" width="1.42" height="0.99" color="#ffffff" material="shader: flat"></a-plane>
+            {/* Subtle Modern Architectural Horizon Canvas (Warm Ivory, Sky Blue, Gold & Sandstone) */}
+            <a-plane position="0 0.16 0.019" width="1.28" height="0.52" color="#bae6fd" material="shader: flat"></a-plane>
+            <a-plane position="0 -0.22 0.019" width="1.28" height="0.28" color="#fde68a" material="shader: flat"></a-plane>
+            <a-plane position="-0.32 -0.02 0.021" width="0.22" height="0.48" color="#64748b" material="shader: flat"></a-plane>
+            <a-plane position="-0.05 0.04 0.021" width="0.26" height="0.60" color="#475569" material="shader: flat"></a-plane>
+            <a-plane position="0.26 -0.06 0.021" width="0.24" height="0.40" color="#94a3b8" material="shader: flat"></a-plane>
+          </a-entity>
 
           {/* INDOOR EXECUTIVE POTTED PLANT (Left Corner, matching Reference Image) */}
-          <a-entity position="-2.6 0 -0.9">
+          <a-entity position="-2.8 0 -2.6">
             <a-cylinder position="0 0.25 0" radius="0.24" height="0.5" color="#f8fafc" material="roughness: 0.2; metalness: 0.1"></a-cylinder>
-            <a-cylinder position="0 0.02 0" radius="0.26" height="0.04" color="#0f172a"></a-cylinder>
-            <a-cylinder position="0 0.48 0" radius="0.22" height="0.02" color="#26170e"></a-cylinder>
-            <a-cylinder position="0 0.7 0" radius="0.02" height="0.45" color="#451a03" rotation="5 0 8"></a-cylinder>
+            <a-cylinder position="0 0.02 0" radius="0.26" height="0.04" color="#cbd5e1"></a-cylinder>
+            <a-cylinder position="0 0.48 0" radius="0.22" height="0.02" color="#5c371d"></a-cylinder>
+            <a-cylinder position="0 0.7 0" radius="0.02" height="0.45" color="#7a4f31" rotation="5 0 8"></a-cylinder>
             <a-cylinder position="-0.04 0.9 0.02" radius="0.016" height="0.4" color="#15803d" rotation="15 20 -12"></a-cylinder>
             <a-cylinder position="0.04 0.85 -0.03" radius="0.016" height="0.38" color="#15803d" rotation="-12 -30 18"></a-cylinder>
-            <a-sphere position="0 1.05 0" radius="0.3" scale="1.4 0.25 1.1" color="#15803d" material="roughness: 0.7" rotation="20 15 10"></a-sphere>
-            <a-sphere position="-0.15 1.25 0.05" radius="0.28" scale="1.3 0.2 1.2" color="#16a34a" material="roughness: 0.7" rotation="10 -25 -15"></a-sphere>
-            <a-sphere position="0.12 1.18 -0.08" radius="0.26" scale="1.2 0.2 1.1" color="#166534" material="roughness: 0.7" rotation="-25 35 15"></a-sphere>
-            <a-sphere position="0 1.38 0" radius="0.24" scale="1.1 0.2 1.0" color="#22c55e" material="roughness: 0.7" rotation="5 0 5"></a-sphere>
+            <a-sphere position="0 1.05 0" radius="0.3" scale="1.4 0.25 1.1" color="#16a34a" material="roughness: 0.6" rotation="20 15 10"></a-sphere>
+            <a-sphere position="-0.15 1.25 0.05" radius="0.28" scale="1.3 0.2 1.2" color="#22c55e" material="roughness: 0.6" rotation="10 -25 -15"></a-sphere>
+            <a-sphere position="0.12 1.18 -0.08" radius="0.26" scale="1.2 0.2 1.1" color="#15803d" material="roughness: 0.6" rotation="-25 35 15"></a-sphere>
+            <a-sphere position="0 1.38 0" radius="0.24" scale="1.1 0.2 1.0" color="#4ade80" material="roughness: 0.6" rotation="5 0 5"></a-sphere>
           </a-entity>
 
           {/* ═══════════════════════════════════════════════════════════════
-              REAR WALL: FLOOR-TO-CEILING GLASS & CITY SKYLINE
+              REAR WALL: FLOOR-TO-CEILING GLASS & UNOBSTRUCTED CITY SKYLINE
+              (All dark opaque blocks removed; realistic modern cityscape clearly visible)
           ═══════════════════════════════════════════════════════════════ */}
-          {/* Main Window Mullions (Dark Charcoal Steel #18181b) */}
-          {[-3.4, -2.1, -0.7, 0.7, 2.1, 3.4].map((x, idx) => (
+          {/* Slim Brushed-Aluminum Window Mullions (#475569) */}
+          <a-box position="0 0.04 -3.76" width="8.4" height="0.08" depth="0.12" color="#475569" material="metalness: 0.6; roughness: 0.3"></a-box>
+          {[-3.5, -2.1, -0.7, 0.7, 2.1, 3.5].map((x, idx) => (
             <a-box 
               key={`rear-mullion-${idx}`} 
               position={`${x} 1.6 -3.78`} 
-              width="0.08" 
+              width="0.05" 
               height="3.2" 
-              depth="0.1" 
-              color="#18181b" 
-              material="metalness: 0.85; roughness: 0.25"
+              depth="0.08" 
+              color="#475569" 
+              material="metalness: 0.6; roughness: 0.3"
             ></a-box>
           ))}
-          <a-box position="0 1.05 -3.78" width="8.4" height="0.07" depth="0.09" color="#18181b" material="metalness: 0.85; roughness: 0.25"></a-box>
-          <a-box position="0 2.35 -3.78" width="8.4" height="0.07" depth="0.09" color="#18181b" material="metalness: 0.85; roughness: 0.25"></a-box>
-          <a-box position="0 3.16 -3.78" width="8.4" height="0.08" depth="0.1" color="#18181b" material="metalness: 0.85; roughness: 0.25"></a-box>
+          <a-box position="0 3.16 -3.78" width="8.4" height="0.08" depth="0.10" color="#475569" material="metalness: 0.6; roughness: 0.3"></a-box>
 
-          {/* Transparent Glass Pane */}
-          <a-box position="0 1.6 -3.76" width="8.4" height="3.2" depth="0.02" color="#e0f2fe" material="opacity: 0.12; transparent: true; metalness: 0.95; roughness: 0.05"></a-box>
+          {/* Ultra-Clear Daylight Glass Pane */}
+          <a-box position="0 1.6 -3.76" width="8.4" height="3.2" depth="0.01" color="#ffffff" material="opacity: 0.04; transparent: true; shader: flat"></a-box>
 
-          {/* OUTDOOR CITY SKYLINE PANORAMA BACKDROP (Anchored behind windows) */}
+          {/* UNOBSTRUCTED 180° WRAP-AROUND CITY SKYLINE PANORAMA (Visible across entire window & when moving VR headset) */}
+          {/* Center High-Resolution Cityscape Panorama (Fills entire rear glass floor-to-ceiling) */}
           <a-plane 
+            id="city-skyline-center"
             src="#img-skyline"
-            position="0 3.2 -13.0" 
-            width="36" 
-            height="16" 
+            position="0 2.65 -7.2" 
+            width="24" 
+            height="13.5" 
             material="shader: flat"
           ></a-plane>
-
-          {/* OUTDOOR 3D SKYSCRAPER GEOMETRY BLOCKS (Creating True Depth Parallax) */}
-          <a-box position="-5.5 4.5 -10" width="2.8" height="12" depth="3.5" color="#cbd5e1" material="roughness: 0.85"></a-box>
-          <a-box position="-2.6 3.2 -9" width="2.0" height="8.5" depth="2.5" color="#94a3b8" material="roughness: 0.7"></a-box>
-          <a-box position="3.2 3.8 -9.5" width="2.4" height="9.5" depth="3.0" color="#cbd5e1" material="roughness: 0.8"></a-box>
-          <a-box position="6.0 5.0 -11" width="3.0" height="12" depth="3.8" color="#64748b" material="roughness: 0.75"></a-box>
+          {/* Left Wrap-Around Cityscape Wing (Maintains city view when looking right-to-left) */}
+          <a-plane 
+            id="city-skyline-left"
+            src="#img-skyline"
+            position="-18.5 2.65 -4.2" 
+            rotation="0 35 0"
+            width="20" 
+            height="13.5" 
+            material="shader: flat"
+          ></a-plane>
+          {/* Right Wrap-Around Cityscape Wing (Maintains city view when looking left-to-right) */}
+          <a-plane 
+            id="city-skyline-right"
+            src="#img-skyline"
+            position="18.5 2.65 -4.2" 
+            rotation="0 -35 0"
+            width="20" 
+            height="13.5" 
+            material="shader: flat"
+          ></a-plane>
+          {/* Bright Daylight Horizon Ground Apron below skyline */}
+          <a-plane position="0 -3.8 -7.0" rotation="-90 0 0" width="60" height="25" color="#cbd5e1" material="shader: flat"></a-plane>
 
           {/* ═══════════════════════════════════════════════════════════════
               THE EXECUTIVE WOODEN DESK (Matches Reference Image Proportions)
@@ -363,7 +369,7 @@ export const VRScene = memo(({
 
             {/* 1. Black Desk Mat (Center Front) */}
             <a-plane 
-              position="0 0.772 -0.15" 
+              position="0 0.773 -0.15" 
               rotation="-90 0 0" 
               width="1.12" 
               height="0.65" 
@@ -372,36 +378,54 @@ export const VRScene = memo(({
             ></a-plane>
 
             {/* 2. Candidate Flat Resume Paper Stack (Left of desk mat, real A4 scale) */}
-            <a-entity position="-0.65 0.776 -0.15" rotation="-90 0 4">
-              <a-box position="0 0 -0.006" width="0.22" height="0.30" depth="0.012" color="#e2e8f0"></a-box>
-              <a-plane width="0.22" height="0.30" src="#img-resume" material="shader: flat"></a-plane>
+            <a-entity position="-0.65 0.783 -0.15" rotation="-90 0 4">
+              <a-box position="0 0 -0.006" width="0.22" height="0.30" depth="0.010" color="#e2e8f0"></a-box>
+              <a-plane position="0 0 0.002" width="0.22" height="0.30" src="#img-resume" material="shader: flat"></a-plane>
             </a-entity>
 
             {/* 3. The Digital Tablet (Center of Desk Mat) */}
-            <a-entity position="-0.02 0.776 -0.15" rotation="-90 0 0">
+            <a-entity position="-0.02 0.784 -0.15" rotation="-90 0 0">
               <a-box position="0 0 -0.004" width="0.24" height="0.33" depth="0.008" color="#09090b" material="metalness: 0.8; roughness: 0.2"></a-box>
-              <a-plane position="0 0 0.001" width="0.22" height="0.31" src="#img-tablet" material="shader: flat"></a-plane>
+              <a-plane position="0 0 0.002" width="0.22" height="0.31" src="#img-tablet" material="shader: flat"></a-plane>
             </a-entity>
 
             {/* 4. Spiral Notepad & Stylus Pen (Right of Tablet on Desk Mat, real scale) */}
-            <a-entity position="0.26 0.776 -0.15" rotation="-90 0 4">
+            <a-entity position="0.26 0.784 -0.15" rotation="-90 0 4">
               <a-box position="0 0 -0.005" width="0.16" height="0.24" depth="0.01" color="#f8fafc"></a-box>
-              <a-plane position="0 0 0.001" width="0.15" height="0.23" color="#ffffff">
-                <a-plane position="0 0.08 0.001" width="0.13" height="0.008" color="#38bdf8"></a-plane>
-                <a-plane position="0 0.04 0.001" width="0.13" height="0.004" color="#cbd5e1"></a-plane>
-                <a-plane position="0 0.00 0.001" width="0.13" height="0.004" color="#cbd5e1"></a-plane>
-                <a-plane position="0 -0.04 0.001" width="0.13" height="0.004" color="#cbd5e1"></a-plane>
-                <a-plane position="0 -0.08 0.001" width="0.13" height="0.004" color="#cbd5e1"></a-plane>
+              <a-plane position="0 0 0.002" width="0.15" height="0.23" color="#ffffff">
+                <a-plane position="0 0.08 0.002" width="0.13" height="0.008" color="#38bdf8"></a-plane>
+                <a-plane position="0 0.04 0.002" width="0.13" height="0.004" color="#cbd5e1"></a-plane>
+                <a-plane position="0 0.00 0.002" width="0.13" height="0.004" color="#cbd5e1"></a-plane>
+                <a-plane position="0 -0.04 0.002" width="0.13" height="0.004" color="#cbd5e1"></a-plane>
+                <a-plane position="0 -0.08 0.002" width="0.13" height="0.004" color="#cbd5e1"></a-plane>
               </a-plane>
               <a-cylinder position="0 0.12 0.005" radius="0.006" height="0.14" rotation="0 0 90" color="#94a3b8" material="metalness: 0.9"></a-cylinder>
             </a-entity>
-            <a-cylinder position="0.38 0.782 -0.15" radius="0.004" height="0.15" rotation="90 0 5" color="#f8fafc" material="roughness: 0.3; metalness: 0.4"></a-cylinder>
+            <a-cylinder position="0.38 0.785 -0.15" radius="0.004" height="0.15" rotation="90 0 5" color="#f8fafc" material="roughness: 0.3; metalness: 0.4"></a-cylinder>
 
-            {/* 5. Standing Acrylic Resume Holder (On Left Side of Desk) */}
-            <a-entity position="-0.85 0.77 -0.72" rotation="0 22 0">
-              <a-box position="0 0.008 0" width="0.26" height="0.012" depth="0.12" color="#e0f2fe" material="opacity: 0.35; transparent: true; roughness: 0.1"></a-box>
-              <a-box position="0 0.16 -0.04" width="0.26" height="0.32" depth="0.008" rotation="-12 0 0" color="#e0f2fe" material="opacity: 0.35; transparent: true; roughness: 0.1"></a-box>
-              <a-plane position="0 0.17 -0.03" rotation="-12 0 0" width="0.24" height="0.32" src="#img-resume" material="shader: flat"></a-plane>
+            {/* 5. Realistic Open Executive Laptop (Interviewer-Side Desk, Left of Interviewer) */}
+            <a-entity id="interviewer-laptop" position="-0.72 0.774 -0.82" rotation="0 132 0">
+              {/* Sleek Brushed-Silver Aluminum Keyboard Base Chassis */}
+              <a-box position="0 0.007 0" width="0.36" height="0.014" depth="0.25" color="#cbd5e1" material="metalness: 0.75; roughness: 0.25"></a-box>
+              {/* Recessed Matte-Charcoal Keyboard Deck */}
+              <a-plane position="0 0.015 -0.015" rotation="-90 0 0" width="0.31" height="0.125" color="#1e293b" material="roughness: 0.8"></a-plane>
+              {/* Precision Glass Trackpad */}
+              <a-plane position="0 0.015 0.075" rotation="-90 0 0" width="0.105" height="0.062" color="#94a3b8" material="metalness: 0.5; roughness: 0.3"></a-plane>
+              {/* Cylindrical Dark Metallic Hinge Bar */}
+              <a-cylinder position="0 0.016 -0.12" radius="0.006" height="0.28" rotation="0 0 90" color="#334155" material="metalness: 0.8; roughness: 0.2"></a-cylinder>
+              {/* Open Upright Tilted 15-inch Laptop Display Assembly (Rising clearly above keyboard base) */}
+              <a-entity position="0 0.016 -0.12" rotation="-18 0 0">
+                {/* Brushed Aluminum Display Back Cover */}
+                <a-box position="0 0.115 0" width="0.36" height="0.23" depth="0.008" color="#e2e8f0" material="metalness: 0.78; roughness: 0.22"></a-box>
+                {/* Brushed Rim Trim around Display Lid */}
+                <a-box position="0 0.115 0" width="0.364" height="0.234" depth="0.006" color="#94a3b8" material="metalness: 0.85; roughness: 0.2"></a-box>
+                {/* Glowing Metallic Emblem on Lid Back (Visible from candidate side) */}
+                <a-circle position="0 0.115 -0.005" rotation="0 180 0" radius="0.022" color="#ffffff" material="shader: flat"></a-circle>
+                {/* Thin Dark Bezel Frame on Screen Front (Facing Interviewer & Angled Side Profile) */}
+                <a-plane position="0 0.115 0.005" width="0.346" height="0.216" color="#0f172a" material="roughness: 0.4"></a-plane>
+                {/* Illuminated High-Res Dashboard Screen Facing Interviewer */}
+                <a-plane position="0 0.115 0.006" width="0.33" height="0.20" src="#img-tablet" material="shader: flat"></a-plane>
+              </a-entity>
             </a-entity>
 
             {/* 6. INTERVIEWER NAMEPLATE: MR. VINODH — HIRING MANAGER */}
@@ -439,11 +463,11 @@ export const VRScene = memo(({
               <a-cylinder position="0 0.20 -0.16" radius="0.035" height="0.4" color="#e2e8f0" material="metalness: 0.9; roughness: 0.1"></a-cylinder>
             </a-entity>
 
-            {/* SEATED MR. VINODH AVATAR FIGURE */}
+            {/* SEATED MR. VINODH AVATAR FIGURE (Fixed position, zero oscillation or movement) */}
             <a-entity 
               id="mr-vinodh-avatar" 
               position="0 1.39 0.02"
-              animation="property: position; to: 0 1.398 0.02; dir: alternate; dur: 3200; easing: easeInOutSine; loop: true"
+              scale="1 1 1"
             >
               <a-image 
                 src="#img-vinodh" 
@@ -462,7 +486,6 @@ export const VRScene = memo(({
                 radius-outer="0.32" 
                 color="#38bdf8" 
                 material="shader: flat; opacity: 0.75"
-                animation="property: scale; to: 1.05 1.05 1.05; dir: alternate; dur: 380; loop: true"
               ></a-ring>
             </a-entity>
           </a-entity>

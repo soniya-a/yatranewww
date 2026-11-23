@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { useEffect, useState, useRef, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { ArrowLeft, Mic, MicOff, Clock, Send, Loader2, Award, ClipboardCheck, Sparkles, Check, CheckCircle, ChevronRight, BookOpen, AlertCircle, Sun, Volume2, ZoomIn, ZoomOut, Smartphone, Layers, Radio } from 'lucide-react';
+import { ArrowLeft, Mic, MicOff, Video, VideoOff, Clock, Send, Loader2, Award, ClipboardCheck, Sparkles, Check, CheckCircle, ChevronRight, BookOpen, AlertCircle, Sun, Volume2, ZoomIn, ZoomOut, Smartphone, Layers, Radio } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { supabase } from '../lib/supabase';
 import { VRScene } from "../components/VRScene";
@@ -14,6 +14,7 @@ import {
 import { InterviewHeader } from '../components/interview/InterviewHeader';
 import { AIInterviewerCard } from '../components/interview/AIInterviewerCard';
 import { CanonicalQuestionCard } from '../components/interview/CanonicalQuestionCard';
+import { QuestionSourceCard } from '../components/interview/QuestionSourceCard';
 import { AITranscriptCard } from '../components/interview/AITranscriptCard';
 import { CandidateTranscriptCard } from '../components/interview/CandidateTranscriptCard';
 import { VoiceControls } from '../components/interview/VoiceControls';
@@ -75,8 +76,8 @@ const ROUNDS = [
   { key: "self-introduction", label: "Self-Introduction Round", desc: "First impressions, career goals, and personal pitch" },
   { key: "aptitude", label: "Aptitude Round", desc: "Mathematical puzzles, dynamic logic, and reasoning speed" },
   { key: "technical", label: "Technical Round", desc: "Database models, design patterns, and core development" },
+  { key: "coding", label: "Coding / DSA Round", desc: "Algorithmic problem solving, complexity analysis, and live coding" },
   { key: "project", label: "Project Discussion Round", desc: "Architecture breakdowns, bottlenecks, and hosting budgets" },
-  { key: "gd", label: "GD (Group Discussion) Round", desc: "Corporate debates, remote work ethics, and scaling trade-offs" },
   { key: "hr", label: "HR Round", desc: "Cultural alignment, conflict management, and workplace scenario checks" }
 ];
 
@@ -254,8 +255,16 @@ export default function Interview() {
   // 2. React Router location state
   const state = (location.state || {}) as any;
 
-  // 3. Fallback to scoped storage if needed
-  const scopedContext = retrieveActiveInterviewContext(queryJobId || state.jobId || null);
+  // 3. Fallback to scoped storage ONLY if it matches the requested company/role (prevent cross-company session bleed)
+  const rawScopedContext = retrieveActiveInterviewContext(queryJobId || state.jobId || null);
+  const requestedCompany = (queryCompany || state.company || '').trim();
+  const requestedRole = (queryRole || state.role || '').trim();
+  const isScopedContextCompatible = Boolean(
+    rawScopedContext &&
+    (!requestedCompany || (rawScopedContext.company || '').trim().toLowerCase() === requestedCompany.toLowerCase()) &&
+    (!requestedRole || (rawScopedContext.role || '').trim().toLowerCase() === requestedRole.toLowerCase())
+  );
+  const scopedContext = isScopedContextCompatible ? rawScopedContext : null;
 
   // 4. Resolve exact Job Context with zero hardcoded TCS / Software Engineer fallbacks
   const targetJobId = queryJobId || state.jobId || scopedContext?.jobId || '';
@@ -518,8 +527,11 @@ export default function Interview() {
   const [cameraRigPos, setCameraRigPos] = useState({ x: 0, y: 0, z: 1.45 }); // starts outside the door
   const [questions, setQuestions] = useState<any[]>([]);
   const [loadingQuestions, setLoadingQuestions] = useState(false);
-  const [answers, setAnswers] = useState<Record<string, string>>({}); // structure: { "roundIdx_questionIdx": answerString }
+  const [answers, setAnswers] = useState<Record<string, string>>({}); // structure: { "Q001": answerString }
   const [codeAnswers, setCodeAnswers] = useState<Record<string, string>>({});
+  const [codeExecutionResults, setCodeExecutionResults] = useState<Record<string, any>>({});
+  const [assessmentError, setAssessmentError] = useState<string | null>(null);
+  const [activeReportId, setActiveReportId] = useState<string>('');
   
   const [isMicOn, setIsMicOn] = useState(false);
   const isMicOnRef = useRef(false);
@@ -529,10 +541,22 @@ export default function Interview() {
   const [cameraZ, setCameraZ] = useState(1.5);
   const [showTips, setShowTips] = useState(true);
 
-  // Live Camera state for candidate webcam auto-start
+  // Pre-interview Instructions & Hardware Verification Modal State
+  const [showPreInterviewModal, setShowPreInterviewModal] = useState<boolean>(true);
+  const [showVREvidenceModal, setShowVREvidenceModal] = useState<boolean>(false);
+  const [micPermissionStatus, setMicPermissionStatus] = useState<'checking' | 'granted' | 'denied'>('checking');
+  const [cameraPermissionStatus, setCameraPermissionStatus] = useState<'checking' | 'granted' | 'denied'>('checking');
+  const previewVideoRef = useRef<HTMLVideoElement | null>(null);
+
+  // Live Camera & Screen Share state for candidate proctoring
   const [isCameraOn, setIsCameraOn] = useState(false);
   const [activeStream, setActiveStream] = useState<MediaStream | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [screenSharePermissionStatus, setScreenSharePermissionStatus] = useState<'not_requested' | 'granted' | 'denied'>('not_requested');
+  const [isScreenSharing, setIsScreenSharing] = useState(false);
+  const [screenStream, setScreenStream] = useState<MediaStream | null>(null);
+  const screenShareStartRef = useRef<number | null>(null);
+  const tabHiddenSinceRef = useRef<number | null>(null);
 
   // Re-attach stream when entering/exiting VR mode
   useEffect(() => {
@@ -540,6 +564,139 @@ export default function Interview() {
       videoRef.current.srcObject = activeStream;
     }
   }, [isVRActive, activeStream]);
+
+  // Request & Toggle Permissions with Real Device Status
+  const requestMicPermission = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      setMicPermissionStatus('granted');
+      stream.getTracks().forEach(t => t.stop());
+    } catch (err) {
+      console.warn("Microphone permission denied:", err);
+      setMicPermissionStatus('denied');
+    }
+  };
+
+  const attachCameraTrackListeners = (stream: MediaStream) => {
+    stream.getVideoTracks().forEach(track => {
+      track.onended = () => {
+        setIsCameraOn(false);
+        setBehaviorLogs(prev => [
+          ...prev,
+          {
+            timestamp: Date.now(),
+            marker: 'CAMERA_DISCONNECTED',
+            confidence: 1.0,
+            details: 'Webcam video track ended or disconnected unexpectedly'
+          }
+        ]);
+      };
+    });
+  };
+
+  const requestCameraPermission = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      attachCameraTrackListeners(stream);
+      setActiveStream(stream);
+      setIsCameraOn(true);
+      setCameraPermissionStatus('granted');
+      setBehaviorLogs(prev => [
+        ...prev,
+        { timestamp: Date.now(), marker: 'CAMERA_CONNECTED', confidence: 1.0, details: 'Candidate camera stream active' }
+      ]);
+      if (videoRef.current) videoRef.current.srcObject = stream;
+      if (previewVideoRef.current) previewVideoRef.current.srcObject = stream;
+    } catch (err) {
+      console.warn("Camera access denied:", err);
+      setIsCameraOn(false);
+      setCameraPermissionStatus('denied');
+    }
+  };
+
+  const requestScreenSharePermission = async () => {
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getDisplayMedia) {
+      setScreenSharePermissionStatus('denied');
+      return;
+    }
+    try {
+      const displayStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+      const now = Date.now();
+      screenShareStartRef.current = now;
+      setScreenStream(displayStream);
+      setIsScreenSharing(true);
+      setScreenSharePermissionStatus('granted');
+      setBehaviorLogs(prev => [
+        ...prev,
+        { timestamp: now, marker: 'SCREEN_SHARE_STARTED', confidence: 1.0, details: 'Screen sharing started via getDisplayMedia' }
+      ]);
+
+      displayStream.getVideoTracks().forEach(track => {
+        track.onended = () => {
+          const endTs = Date.now();
+          const dur = screenShareStartRef.current ? endTs - screenShareStartRef.current : undefined;
+          setIsScreenSharing(false);
+          setScreenStream(null);
+          setBehaviorLogs(prev => [
+            ...prev,
+            {
+              timestamp: endTs,
+              marker: 'SCREEN_SHARE_STOPPED',
+              confidence: 1.0,
+              durationMs: dur,
+              details: `Screen sharing track ended after ${dur ? Math.round(dur / 1000) + 's' : 'active session'}`
+            }
+          ]);
+        };
+      });
+    } catch (err) {
+      console.warn("Screen share permission denied or cancelled:", err);
+      setIsScreenSharing(false);
+      setScreenSharePermissionStatus('denied');
+    }
+  };
+
+  // Track tab visibility changes and window focus interruptions with timestamps & durations
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      const now = Date.now();
+      if (document.visibilityState === 'hidden') {
+        tabHiddenSinceRef.current = now;
+        setBehaviorLogs(prev => [
+          ...prev,
+          { timestamp: now, marker: 'TAB_HIDDEN', confidence: 1.0, details: 'Candidate switched away from interview browser tab' }
+        ]);
+      } else if (document.visibilityState === 'visible' && tabHiddenSinceRef.current) {
+        const awayMs = now - tabHiddenSinceRef.current;
+        tabHiddenSinceRef.current = null;
+        setBehaviorLogs(prev => [
+          ...prev,
+          {
+            timestamp: now,
+            marker: 'TAB_VISIBLE',
+            confidence: 1.0,
+            durationMs: awayMs,
+            details: `Candidate returned to interview tab after ${Math.round(awayMs / 1000)}s`
+          }
+        ]);
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, []);
+
+  const toggleCamera = async () => {
+    if (isCameraOn && activeStream) {
+      activeStream.getVideoTracks().forEach(t => t.stop());
+      setActiveStream(null);
+      setIsCameraOn(false);
+      setCameraPermissionStatus('denied');
+    } else {
+      await requestCameraPermission();
+    }
+  };
 
   // Behavior Observation
   const [behaviorLogs, setBehaviorLogs] = useState<BehaviorLog[]>([]);
@@ -557,37 +714,60 @@ export default function Interview() {
     };
   }, []);
 
+  // Auto-probe camera and microphone permissions on initial mount
   useEffect(() => {
-    let stream: MediaStream | null = null;
-    const startCamera = async () => {
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: true });
-        setActiveStream(stream);
-        setIsCameraOn(true);
-      } catch (err) {
-        console.warn("Camera access failed or denied:", err);
-        setIsCameraOn(false);
+    let unmounted = false;
+    const probeDevices = async () => {
+      if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
+        // Probe Mic
+        try {
+          const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          if (!unmounted) setMicPermissionStatus('granted');
+          micStream.getTracks().forEach(t => t.stop());
+        } catch {
+          if (!unmounted) setMicPermissionStatus('denied');
+        }
+
+        // Probe Camera
+        try {
+          const camStream = await navigator.mediaDevices.getUserMedia({ video: true });
+          if (!unmounted) {
+            setActiveStream(camStream);
+            setIsCameraOn(true);
+            setCameraPermissionStatus('granted');
+            if (videoRef.current) videoRef.current.srcObject = camStream;
+            if (previewVideoRef.current) previewVideoRef.current.srcObject = camStream;
+          }
+        } catch {
+          if (!unmounted) {
+            setIsCameraOn(false);
+            setCameraPermissionStatus('denied');
+          }
+        }
+      } else {
+        if (!unmounted) {
+          setMicPermissionStatus('denied');
+          setCameraPermissionStatus('denied');
+        }
       }
     };
-    startCamera();
+
+    probeDevices();
     return () => {
-      if (stream) {
-        stream.getTracks().forEach(t => t.stop());
-      }
+      unmounted = true;
     };
   }, []);
 
   useEffect(() => {
-    if (isCameraOn && activeStream && videoRef.current) {
-      videoRef.current.srcObject = activeStream;
+    if (isCameraOn && activeStream) {
+      if (videoRef.current) videoRef.current.srcObject = activeStream;
+      if (previewVideoRef.current) previewVideoRef.current.srcObject = activeStream;
       // Start behavioral observation
-      if (behaviorObserverRef.current) {
+      if (behaviorObserverRef.current && videoRef.current) {
         behaviorObserverRef.current.startObserving(videoRef.current);
       }
     }
   }, [isCameraOn, activeStream]);
-
-  const toggleCamera = () => {};
 
   const handleToggleSpeaking = () => {
     if (isSpeaking) {
@@ -1058,6 +1238,7 @@ export default function Interview() {
       current_question_order: qOrder,
       answers: updatedAnswers,
       code_answers: codeAnswers,
+      code_execution_results: codeExecutionResults,
       behavior_logs: behaviorLogs,
       is_completed: isCompleted
     };
@@ -1125,7 +1306,6 @@ export default function Interview() {
           body: JSON.stringify({
             company: targetCompany,
             role: targetRole,
-            roundName: ROUNDS[currentRoundIndex]?.label || undefined,
             jobDescription: targetJobDescription,
             candidateSkills: candidateSkills,
             parsedResume: parsedResume,
@@ -1212,7 +1392,36 @@ export default function Interview() {
           console.log("[Interview] Restoring verified session:", existingSession.session_id || existingSession.id);
           const restoredSessId = existingSession.session_id || existingSession.id;
           setSessionId(restoredSessId);
-          setAnswers(existingSession.answers || {});
+          const restoredAnswers = existingSession.answers || {};
+          const restoredCodeAnswers = existingSession.code_answers || {};
+          const restoredCodeExec = existingSession.code_execution_results || {};
+          setAnswers(restoredAnswers);
+          setCodeAnswers(restoredCodeAnswers);
+          setCodeExecutionResults(restoredCodeExec);
+          if (Object.keys(restoredAnswers).length > 0 || Object.keys(restoredCodeAnswers).length > 0) {
+            setShowPreInterviewModal(false);
+            // Rebuild chatHistory from restored answers so final report assessment always has full transcript context
+            const rebuiltHistory: Array<{ role: string; text: string; question_id?: string }> = [];
+            for (const qItem of loadedQuestions) {
+              const qKey = qItem.question_id;
+              const qPrompt = qItem.question_text || qItem.question;
+              if (restoredAnswers[qKey] || restoredCodeAnswers[qKey]) {
+                rebuiltHistory.push({
+                  role: 'ai',
+                  text: `[${qItem.round_name || qItem.round || 'Interview'} - ${qKey}] ${qPrompt}`,
+                  question_id: qKey
+                });
+                rebuiltHistory.push({
+                  role: 'user',
+                  text: restoredAnswers[qKey] || `[Code Submission]\n${restoredCodeAnswers[qKey]}`,
+                  question_id: qKey
+                });
+              }
+            }
+            if (rebuiltHistory.length > 0) {
+              setChatHistory(rebuiltHistory);
+            }
+          }
 
           let restoredIndex = 0;
           if (existingSession.current_question_order && existingSession.current_question_order > 0) {
@@ -1561,11 +1770,6 @@ export default function Interview() {
     }
   };
 
-  // Skip a question or submit empty
-  const handleSkipQuestion = () => {
-    handleUserMessage("[Candidate skipped or requested next question]");
-  };
-
   // Trigger manual round change override or progression
   const handleProceedToNextRound = () => {
     if (currentRoundIndex < 5) {
@@ -1575,19 +1779,82 @@ export default function Interview() {
   };
 
 
-  // Aggregate transcripts and evaluate using Gemini grading API
+  // Aggregate saved answers, code submissions, and transcripts and evaluate using final assessment API
   const handleGenerateEvaluationReport = async () => {
-    if (chatHistory.length === 0) {
-      alert("Please participate in the interview rounds first to build up your transcripts!");
+    // 1. Gather all saved answers from component state + localStorage session backup
+    let effectiveAnswers: Record<string, string> = { ...answers };
+    let effectiveCodeAnswers: Record<string, string> = { ...codeAnswers };
+    let effectiveCodeExec: Record<string, any> = { ...codeExecutionResults };
+
+    if (typeof window !== 'undefined' && activeSetId) {
+      try {
+        const cachedRaw = localStorage.getItem(`interview_session_${activeSetId}`);
+        if (cachedRaw) {
+          const cachedSess = JSON.parse(cachedRaw);
+          if (cachedSess?.answers && typeof cachedSess.answers === 'object') {
+            effectiveAnswers = { ...cachedSess.answers, ...effectiveAnswers };
+          }
+          if (cachedSess?.code_answers && typeof cachedSess.code_answers === 'object') {
+            effectiveCodeAnswers = { ...cachedSess.code_answers, ...effectiveCodeAnswers };
+          }
+          if (cachedSess?.code_execution_results && typeof cachedSess.code_execution_results === 'object') {
+            effectiveCodeExec = { ...cachedSess.code_execution_results, ...effectiveCodeExec };
+          }
+        }
+      } catch (_) {}
+    }
+
+    // Build complete transcript if chatHistory is empty (e.g. after page reload)
+    let effectiveTranscript = [...chatHistory];
+    if (effectiveTranscript.length === 0 && questions.length > 0) {
+      for (const qItem of questions) {
+        const qKey = qItem.question_id;
+        const ansText = effectiveAnswers[qKey];
+        const cText = effectiveCodeAnswers[qKey];
+        if (ansText || cText) {
+          effectiveTranscript.push({
+            role: 'ai',
+            text: `[${qItem.round || 'Interview'} - ${qKey}] ${qItem.question_text || qItem.question}`,
+            question_id: qKey
+          } as any);
+          effectiveTranscript.push({
+            role: 'user',
+            text: ansText || `[Code Submission]\n${cText}`,
+            question_id: qKey
+          } as any);
+        }
+      }
+    }
+
+    const hasAnyResponse =
+      Object.keys(effectiveAnswers).length > 0 ||
+      Object.keys(effectiveCodeAnswers).some(k => (effectiveCodeAnswers[k] || '').replace(/\/\/\s*Write your code here\.*/gi, '').trim().length > 0) ||
+      effectiveTranscript.length > 0 ||
+      (questions.length > 0 && currentQuestionIndex >= questions.length);
+
+    if (!hasAnyResponse) {
+      setAssessmentError("No recorded answers were found for this session. Please answer at least one interview question before generating the final report.");
       return;
     }
-    
+
     setIsGrading(true);
-    setGradeResult(null);
+    setAssessmentError(null);
     setSaveSuccess(false);
+
+    // Deterministic reportId scoped to sessionId/activeSetId to prevent duplicate reports on retry
+    const stableSessionId = sessionId || (activeSetId ? `SES_${activeSetId}` : `SES_${Date.now()}`);
+    const deterministicReportId =
+      activeReportId ||
+      `RPT_${(targetCompany || 'COMP').replace(/[^a-zA-Z0-9]/g, '').slice(0, 6).toUpperCase()}_${stableSessionId.replace(/[^a-zA-Z0-9_]/g, '')}`;
+    setActiveReportId(deterministicReportId);
 
     const { data: { session } } = await supabase.auth.getSession();
     const uid = session?.user?.id || localStorage.getItem("guest_uid") || "guest-user-123";
+    const storedSessionToken =
+      typeof window !== 'undefined' && activeSetId
+        ? localStorage.getItem(`interview_session_token_${activeSetId}`) || undefined
+        : undefined;
+
     try {
       const token = session?.access_token || (() => {
         const payload = { user_id: uid };
@@ -1598,42 +1865,76 @@ export default function Interview() {
         return `header.${payloadB64}.signature`;
       })();
 
+      const reqHeaders: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      };
+      if (storedSessionToken) {
+        reqHeaders['x-session-token'] = storedSessionToken;
+      }
+
       const res = await fetch('/api/interview/grade', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
+        headers: reqHeaders,
         body: JSON.stringify({
-          transcript: chatHistory,
+          reportId: deterministicReportId,
+          sessionId: stableSessionId,
+          session_token: storedSessionToken,
+          user_id: uid,
+          questionSetId: activeSetId,
+          setId: activeSetId,
+          transcript: effectiveTranscript,
           role: targetRole,
           company: targetCompany,
           candidateSkills: candidateSkills,
-          answers: answers,
-          codeAnswers: codeAnswers,
-          behaviorLogs: behaviorLogs
+          parsedResume: parsedResume,
+          answers: effectiveAnswers,
+          codeAnswers: effectiveCodeAnswers,
+          codeExecutionResults: effectiveCodeExec,
+          behaviorLogs: behaviorLogs,
+          proctoringTelemetry: {
+            cameraPermission: cameraPermissionStatus,
+            screenSharePermission: screenSharePermissionStatus,
+            screenShareActive: isScreenSharing
+          },
+          interviewMode: isVRActive ? 'vr' : 'normal'
         })
       });
 
       if (!res.ok) {
-        throw new Error("Grading endpoint failed");
+        let errDetail = `Assessment failed (HTTP ${res.status})`;
+        try {
+          const errJson = await res.json();
+          if (errJson?.error) errDetail = errJson.error;
+        } catch (_) {}
+        throw new Error(errDetail);
       }
 
       const reportCard = await res.json();
+      if (!reportCard || typeof reportCard.overall_score !== 'number') {
+        throw new Error("Received an incomplete evaluation report from the server.");
+      }
+
       setGradeResult(reportCard);
+
+      // Update URL search params with reportId=deterministicReportId so the Final Report view has a clean permalink
+      if (typeof window !== 'undefined' && window.history?.replaceState) {
+        const url = new URL(window.location.href);
+        url.searchParams.set('reportId', reportCard.id || deterministicReportId);
+        window.history.replaceState({}, '', url.toString());
+      }
 
       // Fetch structured VR room monitor display performance report
       try {
         const monitorRes = await fetch('/api/interview/monitor-report', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
-          },
+          headers: reqHeaders,
           body: JSON.stringify({
             candidate: session?.user?.user_metadata?.full_name || localStorage.getItem("userName") || "Candidate",
             company: targetCompany,
             role: targetRole,
+            reportId: reportCard.id || deterministicReportId,
+            sessionId: stableSessionId,
             scores: reportCard.scores
           })
         });
@@ -1646,51 +1947,40 @@ export default function Interview() {
       }
 
       const payload = {
+        id: reportCard.id || deterministicReportId,
+        reportId: reportCard.id || deterministicReportId,
+        sessionId: stableSessionId,
+        questionSetId: activeSetId,
         userId: uid,
         role: targetRole,
         company: targetCompany,
         createdAt: Date.now(),
-        score: reportCard.overall_score || 85,
-        feedback: reportCard.naya_personal_message || reportCard.alya_personal_message || "Splendid mock interaction history.",
-        strengths: reportCard.top_3_strengths || ["In-depth technical conceptual breakdowns"],
-        weaknesses: reportCard.top_3_weak_areas || ["Could elaborate on scaling parameters and testing"],
-        transcript: chatHistory,
+        score: reportCard.overall_score ?? 0,
+        feedback: reportCard.hiring_summary || reportCard.naya_personal_message || "Comprehensive rubric evaluation completed.",
+        strengths: reportCard.top_3_strengths || reportCard.strongest_skills || [],
+        weaknesses: reportCard.top_3_weak_areas || reportCard.critical_skill_gaps || [],
+        transcript: effectiveTranscript,
         hiring_decision: reportCard.hiring_decision,
         percentile_estimate: reportCard.percentile_estimate
       };
 
-      // Store securely in database / fallback local storage
+      // Deduplicated persistence in localStorage (replace existing entry with same reportId or sessionId)
       try {
-        if (session?.user && !localStorage.getItem("guest_session")) {
-          const { error: insertError } = await supabase.from('interviews').insert([{
-            user_id: uid,
-            role: targetRole,
-            company: targetCompany,
-            score: reportCard.overall_score || 85,
-            feedback: reportCard.naya_personal_message || reportCard.alya_personal_message || "Splendid mock interaction history.",
-            strengths: reportCard.top_3_strengths || ["In-depth technical conceptual breakdowns"],
-            weaknesses: reportCard.top_3_weak_areas || ["Could elaborate on scaling parameters and testing"],
-            transcript: chatHistory,
-            hiring_decision: reportCard.hiring_decision,
-            percentile_estimate: reportCard.percentile_estimate
-          }]);
-          if (insertError) throw insertError;
-        } else {
-          throw new Error("Guest active");
-        }
-        setSaveSuccess(true);
-      } catch (e) {
-        console.warn("Saving directly to Supabase skipped. Writing to local storage lists.", e);
         const cached = localStorage.getItem(`interviews_${uid}`);
         const currentList = cached ? JSON.parse(cached) : [];
-        const savedItem = { id: `local-interview-${Date.now()}`, ...payload };
-        localStorage.setItem(`interviews_${uid}`, JSON.stringify([savedItem, ...currentList]));
+        const filteredList = Array.isArray(currentList)
+          ? currentList.filter((item: any) => item?.id !== payload.id && item?.sessionId !== stableSessionId)
+          : [];
+        localStorage.setItem(`interviews_${uid}`, JSON.stringify([payload, ...filteredList]));
+        localStorage.setItem("latest_grade_score", String(payload.score));
         setSaveSuccess(true);
+      } catch (storageErr) {
+        console.warn("Local interview report cache write warning:", storageErr);
       }
-    } catch (e) {
-      console.warn(e instanceof Error ? e.message : String(e));
-      // Friendly alert
-      alert("Our server synthesized some evaluation metrics. The scoring metrics will be preserved.");
+    } catch (e: any) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error("[Interview] Final Report generation failed:", msg);
+      setAssessmentError(msg || "Unable to complete final assessment. Your answers are safely saved — click Retry Assessment below.");
     } finally {
       setIsGrading(false);
     }
@@ -1841,7 +2131,7 @@ export default function Interview() {
   // Lifecycle State 4: READY (Render Normal or WebXR VR Room)
   return (
     <div className="relative w-full h-screen bg-transparent text-white overflow-hidden select-none">
-      <div id="vr-ui-overlay" className="absolute inset-0 pointer-events-none z-10">
+      <div id="vr-ui-overlay" className="absolute inset-0 pointer-events-none z-40">
         {errorMessage && interviewState === 'READY' && (
           <div className="absolute top-16 left-1/2 -translate-x-1/2 max-w-xl px-4 py-2 rounded-lg bg-amber-950/90 border border-amber-700/70 text-amber-100 text-xs text-center shadow-lg">
             {errorMessage}
@@ -1939,6 +2229,16 @@ export default function Interview() {
                   ? 'OFFICIAL PREP GUIDE'
                   : 'AI PREDICTED (JD & ROLE)'}
               </span>
+            )}
+            {questions[currentQuestionIndex] && (
+              <button
+                onClick={() => setShowVREvidenceModal(true)}
+                className="pointer-events-auto px-2.5 py-1.5 rounded-lg bg-zinc-900/90 border border-cyan-500/60 text-cyan-400 hover:bg-cyan-500 hover:text-zinc-950 transition-all font-mono text-[9px] font-bold shadow-xs cursor-pointer flex items-center gap-1"
+                title="View Verified Question Evidence & Sources"
+              >
+                <BookOpen className="w-3 h-3" />
+                <span>Evidence</span>
+              </button>
             )}
           </div>
 
@@ -2122,7 +2422,260 @@ export default function Interview() {
         )}
       </AnimatePresence>
 
-      {/* Graded evaluation scorecard modal */}
+      {/* ── Pre-Interview Instructions & System Diagnostics Modal ────────── */}
+      <AnimatePresence>
+        {showPreInterviewModal && (
+          <div className="fixed inset-0 z-50 overflow-y-auto flex items-center justify-center p-4 bg-zinc-950/80 backdrop-blur-md pointer-events-auto">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="relative w-full max-w-2xl bg-white border border-gray-200/90 rounded-3xl p-6 md:p-8 shadow-2xl text-left space-y-6 max-h-[92vh] overflow-y-auto"
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between pb-4 border-b border-gray-100">
+                <div>
+                  <span className="px-2.5 py-1 rounded-md bg-blue-50 text-blue-700 border border-blue-200/80 text-[11px] font-bold uppercase tracking-wider">
+                    Placement Interview Briefing
+                  </span>
+                  <h2 className="text-xl md:text-2xl font-black text-gray-900 tracking-tight mt-1.5">
+                    {targetCompany} — {targetRole}
+                  </h2>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    Review the ground rules and verify your camera & microphone before beginning.
+                  </p>
+                </div>
+              </div>
+
+              {/* Interview Rules Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                <div className="p-3.5 rounded-2xl bg-blue-50/50 border border-blue-100 space-y-1">
+                  <div className="flex items-center gap-2 text-xs font-bold text-blue-900">
+                    <ClipboardCheck className="w-4 h-4 text-blue-600" />
+                    <span>10 Canonical Questions</span>
+                  </div>
+                  <p className="text-[11px] text-blue-800/80 leading-relaxed">
+                    Tailored round allocations spanning Technical, Coding / DSA, Architecture, Project Deep Dive, and HR competencies.
+                  </p>
+                </div>
+
+                <div className="p-3.5 rounded-2xl bg-purple-50/50 border border-purple-100 space-y-1">
+                  <div className="flex items-center gap-2 text-xs font-bold text-purple-900">
+                    <CheckCircle className="w-4 h-4 text-purple-600" />
+                    <span>Mandatory Responses</span>
+                  </div>
+                  <p className="text-[11px] text-purple-800/80 leading-relaxed">
+                    Skipping or early exit controls are disabled. Each response is preserved and scored for your placement referral scorecard.
+                  </p>
+                </div>
+
+                <div className="p-3.5 rounded-2xl bg-emerald-50/50 border border-emerald-100 space-y-1">
+                  <div className="flex items-center gap-2 text-xs font-bold text-emerald-900">
+                    <Mic className="w-4 h-4 text-emerald-600" />
+                    <span>Voice & Typing Support</span>
+                  </div>
+                  <p className="text-[11px] text-emerald-800/80 leading-relaxed">
+                    Speak naturally via your microphone or use the response bar to type code and architectural explanations.
+                  </p>
+                </div>
+
+                <div className="p-3.5 rounded-2xl bg-amber-50/50 border border-amber-100 space-y-1">
+                  <div className="flex items-center gap-2 text-xs font-bold text-amber-900">
+                    <Sparkles className="w-4 h-4 text-amber-600" />
+                    <span>AI Evaluation Engine</span>
+                  </div>
+                  <p className="text-[11px] text-amber-800/80 leading-relaxed">
+                    Identical canonical questions, source evidence, and criteria shared across Direct and VR 3D room modes.
+                  </p>
+                </div>
+              </div>
+
+              {/* Device Permissions Check & Visible Status */}
+              <div className="p-4 rounded-2xl bg-gray-50 border border-gray-200/80 space-y-3">
+                <h3 className="text-xs font-bold text-gray-800 uppercase tracking-wider">
+                  System & Device Diagnostic
+                </h3>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {/* Microphone Diagnostic */}
+                  <div className="p-3 rounded-xl bg-white border border-gray-200/90 flex flex-col justify-between gap-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className="w-7 h-7 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center">
+                          <Mic className="w-4 h-4" />
+                        </div>
+                        <span className="text-xs font-bold text-gray-800">Microphone</span>
+                      </div>
+                      {micPermissionStatus === 'granted' ? (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200 flex items-center gap-1">
+                          <Check className="w-3 h-3" /> Ready
+                        </span>
+                      ) : micPermissionStatus === 'checking' ? (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-100 text-gray-600">
+                          Checking...
+                        </span>
+                      ) : (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                          Not Allowed
+                        </span>
+                      )}
+                    </div>
+
+                    {micPermissionStatus !== 'granted' && (
+                      <button
+                        onClick={requestMicPermission}
+                        className="w-full py-1.5 px-3 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold text-[11px] transition-colors cursor-pointer"
+                      >
+                        Enable Microphone
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Camera Diagnostic */}
+                  <div className="p-3 rounded-xl bg-white border border-gray-200/90 flex flex-col justify-between gap-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className="w-7 h-7 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                          <Video className="w-4 h-4" />
+                        </div>
+                        <span className="text-xs font-bold text-gray-800">Webcam</span>
+                      </div>
+                      {cameraPermissionStatus === 'granted' ? (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200 flex items-center gap-1">
+                          <Check className="w-3 h-3" /> Connected
+                        </span>
+                      ) : cameraPermissionStatus === 'checking' ? (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-100 text-gray-600">
+                          Checking...
+                        </span>
+                      ) : (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                          Disabled
+                        </span>
+                      )}
+                    </div>
+
+                    {cameraPermissionStatus !== 'granted' ? (
+                      <button
+                        onClick={requestCameraPermission}
+                        className="w-full py-1.5 px-3 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold text-[11px] transition-colors cursor-pointer"
+                      >
+                        Enable Camera
+                      </button>
+                    ) : (
+                      <div className="w-full h-16 rounded-lg overflow-hidden bg-zinc-900 border border-zinc-200">
+                        <video
+                          ref={previewVideoRef}
+                          autoPlay
+                          playsInline
+                          muted
+                          className="w-full h-full object-cover"
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Screen Sharing Diagnostic (getDisplayMedia) */}
+                  <div className="p-3 rounded-xl bg-white border border-gray-200/90 flex flex-col justify-between gap-2 sm:col-span-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className="w-7 h-7 rounded-lg bg-purple-50 text-purple-600 flex items-center justify-center">
+                          <Layers className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <span className="text-xs font-bold text-gray-800 block">Screen Sharing (Anti-Cheating Proctoring)</span>
+                          <span className="text-[10px] text-gray-500">Shares screen via getDisplayMedia and logs start/stop &amp; interruption events</span>
+                        </div>
+                      </div>
+                      {isScreenSharing ? (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200 flex items-center gap-1">
+                          <Check className="w-3 h-3" /> Sharing Active
+                        </span>
+                      ) : screenSharePermissionStatus === 'denied' ? (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                          Not Shared
+                        </span>
+                      ) : (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-100 text-gray-600">
+                          Optional / Recommended
+                        </span>
+                      )}
+                    </div>
+                    {!isScreenSharing && (
+                      <button
+                        type="button"
+                        onClick={requestScreenSharePermission}
+                        className="w-full py-1.5 px-3 rounded-lg bg-purple-50 hover:bg-purple-100 text-purple-700 font-bold text-[11px] transition-colors cursor-pointer"
+                      >
+                        Share Screen Before Interview
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Start Interview Action */}
+              <div className="pt-2">
+                <button
+                  onClick={() => {
+                    setShowPreInterviewModal(false);
+                    const firstQ = questions[currentQuestionIndex];
+                    if (firstQ) {
+                      const qText = firstQ.question_text || firstQ.question;
+                      speakText(qText);
+                    }
+                  }}
+                  className="w-full py-4 px-6 rounded-2xl bg-blue-600 hover:bg-blue-700 active:scale-[0.99] text-white font-bold text-sm uppercase tracking-wider shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <span>{Object.keys(answers).length > 0 ? "Resume Interview Session" : "Start Placement Interview"}</span>
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* ── VR Mode Question Evidence Modal ─────────────────────────────── */}
+      <AnimatePresence>
+        {showVREvidenceModal && (
+          <div className="fixed inset-0 z-50 overflow-y-auto flex items-center justify-center p-4 bg-zinc-950/80 backdrop-blur-md pointer-events-auto">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="relative w-full max-w-2xl bg-white border border-gray-200/90 rounded-3xl p-6 shadow-2xl text-left space-y-4 max-h-[90vh] overflow-y-auto"
+            >
+              <div className="flex items-center justify-between pb-3 border-b border-gray-200">
+                <div>
+                  <span className="px-2 py-0.5 rounded bg-blue-50 text-blue-700 text-[10px] font-bold uppercase tracking-wider">
+                    Question Evidence & Provenance
+                  </span>
+                  <h3 className="text-lg font-bold text-gray-900 mt-1">
+                    {questions[currentQuestionIndex]?.question_id}: {questions[currentQuestionIndex]?.round}
+                  </h3>
+                </div>
+                <button
+                  onClick={() => setShowVREvidenceModal(false)}
+                  className="px-3.5 py-1.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-bold transition-colors cursor-pointer"
+                >
+                  Close
+                </button>
+              </div>
+
+              <div className="text-sm font-semibold text-gray-800 leading-snug">
+                {questions[currentQuestionIndex]?.question_text || questions[currentQuestionIndex]?.question}
+              </div>
+
+              <QuestionSourceCard
+                question={questions[currentQuestionIndex]}
+                targetRole={targetRole}
+                targetCompany={targetCompany}
+              />
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
       <AnimatePresence>
         {gradeResult && (
           <div className="fixed inset-0 z-50 overflow-y-auto flex items-center justify-center p-4 text-white pointer-events-auto">
@@ -2131,65 +2684,236 @@ export default function Interview() {
             <motion.div
               initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
-              className="relative w-full max-w-xl bg-zinc-900 border border-zinc-800 rounded-3.5xl p-6 shadow-2xl relative z-10 space-y-6 max-h-[90vh] overflow-y-auto"
+              className="relative w-full max-w-4xl bg-zinc-900 border border-zinc-800 rounded-3xl p-6 shadow-2xl z-10 space-y-6 max-h-[92vh] overflow-y-auto"
             >
-              <div className="text-center space-y-4">
+              <div className="text-center space-y-3">
                 <div className="w-14 h-14 bg-emerald-900/30 border border-emerald-500 rounded-xl flex items-center justify-center text-emerald-400 mx-auto shadow-sm">
                   <CheckCircle className="w-8 h-8 font-black" />
                 </div>
-                
                 <div>
-                  <span className="text-[10px] uppercase tracking-widest font-bold text-cyan-400 font-mono">Sim Sequence Concluded</span>
-                  <h3 className="text-2xl font-black text-zinc-100 mt-1">Hiring Evaluation Scorecard</h3>
-                  <p className="text-xs text-zinc-300 mt-1">Transcript evaluated and scored against standard placement criteria in India.</p>
+                  <span className="text-[10px] uppercase tracking-widest font-bold text-cyan-400 font-mono">Official Placement Evaluation Report</span>
+                  <h3 className="text-2xl font-black text-zinc-100 mt-1">{gradeResult.company || targetCompany} — {gradeResult.role || targetRole}</h3>
+                  <p className="text-xs text-zinc-300 mt-1">{gradeResult.hiring_summary || "Comprehensive rubric evaluation based on recorded responses."}</p>
                 </div>
               </div>
 
-              {/* Score circle */}
-              <div className="p-4 bg-zinc-950 border border-zinc-800 rounded-2xl flex items-center justify-between gap-4 flex-wrap">
-                <div className="space-y-0.5">
-                  <span className="text-[9px] uppercase font-bold text-zinc-300 font-mono">placement validation score</span>
-                  <h4 className="text-xs font-bold text-zinc-300">Corporate referral eligibility</h4>
-                  <div className="pt-2 text-[10px] text-zinc-300 font-mono uppercase">
-                    Decision: <span className="text-white font-bold">{gradeResult.hiring_decision}</span> <br/>
-                    Percentile: <span className="text-white font-bold">{gradeResult.percentile_estimate}</span>
-                  </div>
-                </div>
-                
-                <div className="flex gap-2">
-                  <div className="p-3 bg-cyan-950 border border-cyan-800 rounded-xl text-center min-w-[80px] shadow-sm">
-                    <span className="text-2xl font-black text-cyan-400 leading-none block">{gradeResult.overall_score || 85}</span>
-                    <span className="text-[8px] font-mono text-cyan-400 font-bold block uppercase tracking-widest mt-1">PERCENT</span>
-                  </div>
-                  <div className="p-3 bg-zinc-900 border border-zinc-800 rounded-xl text-center min-w-[60px] shadow-sm">
-                    <span className="text-2xl font-black text-white leading-none block">{gradeResult.overall_grade || "B"}</span>
-                    <span className="text-[8px] font-mono text-zinc-300 font-bold block uppercase tracking-widest mt-1">GRADE</span>
-                  </div>
-                </div>
-              </div>
+              {/* Overall Score & Summary Counts Grid */}
+              {(() => {
+                const qEvals = Array.isArray(gradeResult.question_evaluations) ? gradeResult.question_evaluations : [];
+                const sm = gradeResult.summary_metrics || {
+                  total_questions_asked: qEvals.length || questions.length,
+                  correct_count: qEvals.filter((q: any) => q.answer_status === 'correct' || q.score >= 70).length,
+                  partially_correct_count: qEvals.filter((q: any) => q.answer_status === 'partially_correct' || (q.score >= 35 && q.score < 70)).length,
+                  incorrect_count: qEvals.filter((q: any) => q.answer_status === 'incorrect' || (q.is_answered && q.score < 35)).length,
+                  unanswered_count: qEvals.filter((q: any) => q.answer_status === 'unanswered' || !q.is_answered).length,
+                  total_marks_awarded: qEvals.reduce((acc: number, q: any) => acc + (q.marks_awarded ?? q.score ?? 0), 0),
+                  total_marks_deducted: qEvals.reduce((acc: number, q: any) => acc + (q.marks_deducted ?? (100 - (q.score ?? 0))), 0),
+                  total_max_marks: (qEvals.length || questions.length) * 100
+                };
+                return (
+                  <div className="space-y-3">
+                    <div className="p-4 bg-zinc-950 border border-zinc-800 rounded-2xl flex items-center justify-between gap-4 flex-wrap">
+                      <div className="space-y-1">
+                        <span className="text-[10px] uppercase font-bold text-cyan-400 font-mono">Overall Assessment Summary</span>
+                        <div className="text-xs text-zinc-300 font-mono">
+                          Decision: <span className="text-white font-bold">{gradeResult.hiring_decision}</span> • Percentile: <span className="text-white font-bold">{gradeResult.percentile_estimate}</span>
+                        </div>
+                        <div className="text-xs text-zinc-400 font-mono">
+                          Total Marks Awarded: <span className="text-emerald-400 font-bold">{sm.total_marks_awarded} / {sm.total_max_marks}</span> • Marks Deducted: <span className="text-rose-400 font-bold">-{sm.total_marks_deducted}</span>
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <div className="p-3 bg-cyan-950 border border-cyan-800 rounded-xl text-center min-w-[84px]">
+                          <span className="text-2xl font-black text-cyan-400 leading-none block">{gradeResult.overall_score ?? 0}%</span>
+                          <span className="text-[8px] font-mono text-cyan-400 font-bold block uppercase tracking-widest mt-1">OVERALL SCORE</span>
+                        </div>
+                        <div className="p-3 bg-zinc-900 border border-zinc-800 rounded-xl text-center min-w-[64px]">
+                          <span className="text-2xl font-black text-white leading-none block">{gradeResult.overall_grade || "B"}</span>
+                          <span className="text-[8px] font-mono text-zinc-300 font-bold block uppercase tracking-widest mt-1">GRADE</span>
+                        </div>
+                      </div>
+                    </div>
 
-              {/* Qualitative analysis */}
-              <div className="space-y-2">
-                <span className="text-[9px] uppercase font-bold tracking-widest text-zinc-300 font-mono block">Naya's Personal Feedback:</span>
-                <p className="text-xs text-zinc-300 leading-relaxed bg-zinc-950 p-4 border border-zinc-800 rounded-xl italic">
-                  "{gradeResult.naya_personal_message || gradeResult.alya_personal_message}"
-                </p>
-              </div>
-              
-              <div className="grid grid-cols-3 gap-2">
-                 <div className="p-2 border border-zinc-800 rounded-lg text-center bg-zinc-950/50">
-                    <span className="text-[8px] uppercase tracking-widest font-mono text-zinc-300">Tech Accuracy</span>
-                    <div className="text-[10px] font-bold mt-0.5">{gradeResult.technical_accuracy}</div>
-                 </div>
-                 <div className="p-2 border border-zinc-800 rounded-lg text-center bg-zinc-950/50">
-                    <span className="text-[8px] uppercase tracking-widest font-mono text-zinc-300">Comm. Quality</span>
-                    <div className="text-[10px] font-bold mt-0.5">{gradeResult.communication_quality}</div>
-                 </div>
-                 <div className="p-2 border border-zinc-800 rounded-lg text-center bg-zinc-950/50">
-                    <span className="text-[8px] uppercase tracking-widest font-mono text-zinc-300">Confidence</span>
-                    <div className="text-[10px] font-bold mt-0.5">{gradeResult.confidence_level}</div>
-                 </div>
-              </div>
+                    {/* 5-Box Question Count Breakdown */}
+                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
+                      <div className="p-3 rounded-xl bg-zinc-950 border border-zinc-800 text-center">
+                        <span className="text-lg font-black text-zinc-100 block">{sm.total_questions_asked}</span>
+                        <span className="text-[9px] font-mono uppercase text-zinc-400 font-bold">Total Asked</span>
+                      </div>
+                      <div className="p-3 rounded-xl bg-emerald-950/30 border border-emerald-800/60 text-center">
+                        <span className="text-lg font-black text-emerald-400 block">{sm.correct_count}</span>
+                        <span className="text-[9px] font-mono uppercase text-emerald-300 font-bold">Correct</span>
+                      </div>
+                      <div className="p-3 rounded-xl bg-amber-950/30 border border-amber-800/60 text-center">
+                        <span className="text-lg font-black text-amber-400 block">{sm.partially_correct_count}</span>
+                        <span className="text-[9px] font-mono uppercase text-amber-300 font-bold">Partially Correct</span>
+                      </div>
+                      <div className="p-3 rounded-xl bg-rose-950/30 border border-rose-800/60 text-center">
+                        <span className="text-lg font-black text-rose-400 block">{sm.incorrect_count}</span>
+                        <span className="text-[9px] font-mono uppercase text-rose-300 font-bold">Incorrect</span>
+                      </div>
+                      <div className="p-3 rounded-xl bg-zinc-950 border border-zinc-700 text-center col-span-2 sm:col-span-1">
+                        <span className="text-lg font-black text-zinc-400 block">{sm.unanswered_count}</span>
+                        <span className="text-[9px] font-mono uppercase text-zinc-400 font-bold">Unanswered</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Question-by-Question Detailed Transcript, Rubric & Marks Breakdown */}
+              {Array.isArray(gradeResult.question_evaluations) && gradeResult.question_evaluations.length > 0 && (
+                <div className="space-y-3 pt-3 border-t border-zinc-800">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] uppercase font-bold tracking-widest text-cyan-400 font-mono">
+                      Question-by-Question Evaluation ({gradeResult.question_evaluations.length} Questions)
+                    </span>
+                    {gradeResult.coding_execution_capabilities && (
+                      <span className="text-[9px] font-mono text-amber-300 bg-amber-950/50 border border-amber-800/60 px-2 py-0.5 rounded">
+                        Coding: Static AST &amp; Complexity Rubric (No Live Sandbox)
+                      </span>
+                    )}
+                  </div>
+                  <div className="space-y-3 max-h-[380px] overflow-y-auto pr-1">
+                    {gradeResult.question_evaluations.map((qe: any, idx: number) => {
+                      const status = qe.answer_status || (!qe.is_answered ? 'unanswered' : qe.score >= 70 ? 'correct' : qe.score >= 35 ? 'partially_correct' : 'incorrect');
+                      const awarded = qe.marks_awarded ?? qe.score ?? 0;
+                      const deducted = qe.marks_deducted ?? (100 - awarded);
+                      const statusBadge =
+                        status === 'correct'
+                          ? 'bg-emerald-950/70 border-emerald-600 text-emerald-300'
+                          : status === 'partially_correct'
+                          ? 'bg-amber-950/70 border-amber-600 text-amber-300'
+                          : status === 'incorrect'
+                          ? 'bg-rose-950/70 border-rose-600 text-rose-300'
+                          : 'bg-zinc-800 border-zinc-700 text-zinc-400';
+                      return (
+                        <div key={qe.question_id || idx} className="p-3.5 rounded-xl bg-zinc-950 border border-zinc-800 space-y-2 text-xs">
+                          <div className="flex items-start justify-between gap-2 flex-wrap">
+                            <div className="font-bold text-zinc-100">
+                              <span className="text-cyan-400 font-mono mr-1.5">{qe.question_id || `Q${idx + 1}`}</span>
+                              <span className="text-zinc-400 text-[10px] font-mono mr-2">[{qe.round}]</span>
+                              {qe.question_text || qe.canonical_title}
+                            </div>
+                            <div className="flex items-center gap-1.5 shrink-0 font-mono text-[10px]">
+                              <span className={`px-2 py-0.5 rounded border uppercase font-bold ${statusBadge}`}>
+                                {status.replace('_', ' ')}
+                              </span>
+                              <span className="px-2 py-0.5 rounded bg-emerald-950/50 border border-emerald-800 text-emerald-300 font-bold">
+                                +{awarded} Marks
+                              </span>
+                              <span className="px-2 py-0.5 rounded bg-rose-950/50 border border-rose-800 text-rose-300 font-bold">
+                                -{deducted} Deducted
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 pt-1 text-[11px]">
+                            <div className="p-2.5 rounded-lg bg-zinc-900/80 border border-zinc-800">
+                              <span className="font-mono text-[9px] uppercase font-bold text-zinc-400 block mb-1">Candidate Response / Transcript:</span>
+                              <p className="text-zinc-200 whitespace-pre-wrap break-words">
+                                {qe.candidate_answer ? `"${qe.candidate_answer}"` : <span className="italic text-zinc-500">No response recorded (Unanswered)</span>}
+                              </p>
+                              {qe.submitted_code && (
+                                <pre className="mt-2 p-2 rounded bg-zinc-950 border border-zinc-800 text-[10px] font-mono text-cyan-300 overflow-x-auto">
+                                  {qe.submitted_code}
+                                </pre>
+                              )}
+                              {qe.code_execution_result && (
+                                <div className="mt-1.5 p-2 rounded bg-zinc-950 border border-zinc-800 text-[10px] font-mono">
+                                  <span className={qe.code_execution_result.status === 'passed' ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>
+                                    [{qe.code_execution_result.language?.toUpperCase()} Execution: {qe.code_execution_result.status?.toUpperCase()}]
+                                  </span>
+                                  {qe.code_execution_result.output && (
+                                    <div className="text-zinc-300 mt-0.5">{qe.code_execution_result.output}</div>
+                                  )}
+                                  {qe.code_execution_result.error && (
+                                    <div className="text-rose-400 mt-0.5">{qe.code_execution_result.error}</div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="p-2.5 rounded-lg bg-zinc-900/80 border border-zinc-800 space-y-1.5">
+                              <div>
+                                <span className="font-mono text-[9px] uppercase font-bold text-emerald-400 block">Expected Answer / Reference Concepts:</span>
+                                <p className="text-zinc-300">{qe.expected_answer_summary || "Core domain engineering concepts and trade-off analysis."}</p>
+                              </div>
+                              {Array.isArray(qe.missing_concepts) && qe.missing_concepts.length > 0 && (
+                                <div>
+                                  <span className="font-mono text-[9px] uppercase font-bold text-rose-400 block">What Was Missed:</span>
+                                  <p className="text-rose-200/90">{qe.missing_concepts.join('; ')}</p>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Camera, Screen-Share & Proctoring Telemetry Report */}
+              {gradeResult.proctoring_report && (
+                <div className="space-y-2.5 pt-3 border-t border-zinc-800">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] uppercase font-bold tracking-widest text-purple-400 font-mono">
+                      Camera, Screen-Share &amp; Anti-Cheating Telemetry Report
+                    </span>
+                    <span className="px-2 py-0.5 rounded bg-purple-950/60 border border-purple-700 text-purple-200 font-mono text-[10px] font-bold">
+                      {gradeResult.proctoring_report.interpretation?.integrity_status || 'Clean Session'}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[11px]">
+                    {/* Column 1: Factual Observed Events */}
+                    <div className="p-3 rounded-xl bg-zinc-950 border border-zinc-800 space-y-1.5">
+                      <span className="text-[9px] font-mono uppercase font-bold text-cyan-400 block">
+                        1. Actual Observed Telemetry Events (Factual)
+                      </span>
+                      <div className="grid grid-cols-2 gap-1 text-zinc-300 font-mono text-[10px]">
+                        <span>Camera Status:</span>
+                        <span className="text-white font-bold">{gradeResult.proctoring_report.observed_events?.camera_permission}</span>
+                        <span>Screen Share:</span>
+                        <span className="text-white font-bold">{gradeResult.proctoring_report.observed_events?.screen_share_permission}</span>
+                        <span>Face Present Checks:</span>
+                        <span className="text-emerald-400 font-bold">{gradeResult.proctoring_report.observed_events?.face_present_checks ?? 0}</span>
+                        <span>Face Missing Events:</span>
+                        <span className="text-amber-400 font-bold">
+                          {gradeResult.proctoring_report.observed_events?.face_missing_count ?? 0} ({Math.round((gradeResult.proctoring_report.observed_events?.face_missing_duration_ms || 0) / 1000)}s)
+                        </span>
+                        <span>Multiple Faces:</span>
+                        <span className="text-rose-400 font-bold">{gradeResult.proctoring_report.observed_events?.multiple_faces_count ?? 0}</span>
+                        <span>Head/Gaze Shifts:</span>
+                        <span className="text-zinc-200 font-bold">{gradeResult.proctoring_report.observed_events?.head_movement_count ?? 0}</span>
+                        <span>Tab Switches:</span>
+                        <span className="text-amber-400 font-bold">
+                          {gradeResult.proctoring_report.observed_events?.tab_switch_count ?? 0} ({Math.round((gradeResult.proctoring_report.observed_events?.tab_hidden_duration_ms || 0) / 1000)}s)
+                        </span>
+                        <span>Interruptions:</span>
+                        <span className="text-zinc-200 font-bold">{gradeResult.proctoring_report.observed_events?.total_interruptions ?? 0}</span>
+                      </div>
+                    </div>
+
+                    {/* Column 2: Separate Assessment Interpretation */}
+                    <div className="p-3 rounded-xl bg-zinc-950 border border-zinc-800 space-y-1.5">
+                      <span className="text-[9px] font-mono uppercase font-bold text-amber-400 block">
+                        2. Proctoring Interpretation (Separated from Raw Events)
+                      </span>
+                      <p className="text-zinc-300 text-[11px] leading-relaxed">
+                        {gradeResult.proctoring_report.interpretation?.summary}
+                      </p>
+                      <p className="text-zinc-400 text-[10px] leading-relaxed">
+                        • {gradeResult.proctoring_report.interpretation?.head_movement_note}
+                      </p>
+                      <p className="text-zinc-400 text-[10px] leading-relaxed">
+                        • {gradeResult.proctoring_report.interpretation?.phone_detection_note}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Strengths & Weaknesses checklists */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4 border-t border-zinc-800">
@@ -2348,10 +3072,26 @@ export default function Interview() {
                     role={targetRole}
                     company={targetCompany}
                     codeValue={codeAnswers[questions[currentQuestionIndex]?.question_id] || '// Write your code here...'}
+                    codeExecutionResult={codeExecutionResults[questions[currentQuestionIndex]?.question_id]}
+                    onCodeExecutionResult={(execRes) => {
+                      const qId = questions[currentQuestionIndex]?.question_id;
+                      if (qId) {
+                        setCodeExecutionResults(prev => ({ ...prev, [qId]: execRes }));
+                      }
+                    }}
                     onCodeChange={(val) => {
                       const qId = questions[currentQuestionIndex]?.question_id;
                       if (qId) {
                         setCodeAnswers(prev => ({ ...prev, [qId]: val }));
+                      }
+                    }}
+                    onSubmitCode={() => {
+                      const qId = questions[currentQuestionIndex]?.question_id;
+                      const rawCode = (qId && codeAnswers[qId]) ? codeAnswers[qId].replace(/\/\/\s*Write your code here\.*/gi, '').trim() : '';
+                      const spokenOrTyped = (liveFinalTranscript + ' ' + liveInterimTranscript).trim() || inputText.trim();
+                      const submission = spokenOrTyped || (rawCode ? `[Code Submission]\n${rawCode}` : '');
+                      if (submission) {
+                        handleUserMessage(submission);
                       }
                     }}
                   />
@@ -2381,13 +3121,20 @@ export default function Interview() {
                     isCameraOn={isCameraOn}
                     onToggleCamera={toggleCamera}
                     onSubmitAnswer={() => {
-                      const ans = (liveFinalTranscript + ' ' + liveInterimTranscript).trim() || inputText.trim();
+                      const qId = questions[currentQuestionIndex]?.question_id;
+                      const rawCode = (qId && codeAnswers[qId]) ? codeAnswers[qId].replace(/\/\/\s*Write your code here\.*/gi, '').trim() : '';
+                      const ans = (liveFinalTranscript + ' ' + liveInterimTranscript).trim() || inputText.trim() || (rawCode ? `[Code Submission]\n${rawCode}` : '');
                       if (ans) {
                         handleUserMessage(ans);
                       }
                     }}
-                    onSkipQuestion={handleSkipQuestion}
-                    canSubmit={Boolean((liveFinalTranscript + ' ' + liveInterimTranscript).trim() || inputText.trim())}
+                    canSubmit={Boolean(
+                      (liveFinalTranscript + ' ' + liveInterimTranscript).trim() ||
+                      inputText.trim() ||
+                      ((questions[currentQuestionIndex]?.question_id && codeAnswers[questions[currentQuestionIndex]?.question_id])
+                        ? codeAnswers[questions[currentQuestionIndex]?.question_id].replace(/\/\/\s*Write your code here\.*/gi, '').trim().length > 0
+                        : false)
+                    )}
                     inputText={inputText}
                     onInputTextChange={(val) => {
                       setInputText(val);
@@ -2407,16 +3154,40 @@ export default function Interview() {
                       Interview Concluded
                     </h2>
                     <p className="text-sm text-gray-600 max-w-md mx-auto mt-2 leading-relaxed">
-                      You have answered all {questions.length} canonical interview questions. The AI is ready to synthesize your placement referral evaluation report.
+                      You have answered all {questions.length} canonical interview questions. Click below to evaluate your responses against the engineering rubrics and view your placement report.
                     </p>
                   </div>
-                  <button
-                    onClick={handleGenerateEvaluationReport}
-                    className="py-3.5 px-8 rounded-xl bg-blue-600 hover:bg-blue-700 active:scale-95 text-white text-xs font-bold uppercase tracking-wider shadow-md transition-all flex items-center gap-2 cursor-pointer"
-                  >
-                    <ClipboardCheck className="w-4 h-4" />
-                    <span>Assess & View Final Report</span>
-                  </button>
+
+                  {assessmentError && (
+                    <div className="w-full max-w-md p-3.5 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs text-left flex items-start gap-2.5">
+                      <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                      <div className="flex-1">
+                        <span className="font-bold block">Assessment Error</span>
+                        <span>{assessmentError}</span>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex flex-wrap items-center justify-center gap-3">
+                    <button
+                      type="button"
+                      disabled={isGrading}
+                      onClick={handleGenerateEvaluationReport}
+                      className="py-3.5 px-8 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 active:scale-95 text-white text-xs font-bold uppercase tracking-wider shadow-md transition-all flex items-center gap-2 cursor-pointer"
+                    >
+                      {isGrading ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          <span>Evaluating Answers &amp; Generating Report...</span>
+                        </>
+                      ) : (
+                        <>
+                          <ClipboardCheck className="w-4 h-4" />
+                          <span>{assessmentError ? 'Retry Final Report Assessment' : 'Assess & View Final Report'}</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
@@ -2645,58 +3416,7 @@ function getFallbackLocalQuestions(roundType: string, role: string, company: str
         expected_points: ["Highlights a proprietary algorithm, custom state machine, or design triumph", "Shows true builder passion, creativity, and clean code hygiene", "Explains why it stands out compared to vanilla templates"]
       }
     ];
-  } else if (norm.includes("gd") || norm.includes("group")) {
-    return [
-      {
-        id: 1,
-        question: "Group Discussion Topic: 'Has the surge of remote collaboration decreased codebase quality and slowed product velocity in tech corporations?' What is your engineering stance?",
-        follow_up: "How would you respond to a peer who claims remote work causes unmanageable code merge conflicts?",
-        expected_points: ["Weights remote async documentation vs live whiteboard sessions objectively", "Proposes tools like trunk-based development, structured reviews, and automated CI/CD", "Maintains clear debate stance and supporting metrics"]
-      },
-      {
-        id: 2,
-        question: "Topic: 'Is generative AI a threat to junior software developers, or is it merely an accelerator?' Portray your views.",
-        follow_up: "If seniors rely heavily on AI generation, how will juniors learn to debug from scratch?",
-        expected_points: ["Balances prompt assistance with deep debugging and verification skills", "Highlights that AI solves boilerplate but system architecture demands human reasoning", "Acknowledges shift in junior role requirements towards code curation"]
-      },
-      {
-        id: 3,
-        question: "Topic: 'Should standard 4-year computer science degrees be replaced entirely by rigorous 12-week specialized bootcamps and certifications?'",
-        follow_up: "What theoretical computer science skills (e.g. compilers, operating systems) do bootcamps omit that are vital?",
-        expected_points: ["Compares foundational mathematics, DS/Algorithms, and deep OS with practical web dev", "Argues for high-integrity blended tracks or university core with rapid hacking projects", "Respects alternative learning tracks and industry skill validation mechanisms"]
-      },
-      {
-        id: 4,
-        question: "Topic: 'To what extent should consumer software gather client usage telemetry? Where is the boundary of user privacy?'",
-        follow_up: "How can we compile sufficient diagnostic logs when users opt out of telemetry entirely?",
-        expected_points: ["Stresses user consent, clear opt-out routes, and data anonymization", "Examines functional logging benefits vs invasive scroll-tracking marketing profiles", "Advocates for transparency, compliance standards like GDPR, and on-device processing"]
-      },
-      {
-        id: 5,
-        question: "Topic: 'Is open source software development structurally sustainable without continuous tech corporate patronage?'",
-        follow_up: "Can you name one critical library whose security failure compromised globally major systems?",
-        expected_points: ["Cites volunteer burnout, security oversights (e.g., Log4j or Heartbleed)", "Discusses corporate sponsorship models, foundations, and developer grant programs", "Argues for corporate tech giants committing standard dev hours back to core dependencies"]
-      },
-      {
-        id: 6,
-        question: "Topic: 'Should software developer compensation be calculated based on geographical location resources, or uniform value delivered?'",
-        follow_up: "If compensation is completely flat, how will companies afford offices in high-resource major hubs?",
-        expected_points: ["Examines cost-of-living adjustments vs equity of equal developer contribution", "Highlights risk of 'brain drain' if hub offices fail to attract talent due to low index", "Proposes balanced approaches like base scale with flexible city adjustments"]
-      },
-      {
-        id: 7,
-        question: "Topic: 'What is more critical to student employment: deep theoretical knowledge of complex DSA or mastery of modern application frameworks?'",
-        follow_up: "Why do top tier firms still use DSA questions as their primary filtering mechanism?",
-        expected_points: ["Balances problem-solving analytical agility with practical immediate project value", "Argues that frameworks decay in years while problem-solving heuristics persist", "Points out that frameworks are quickly learned when basic computer science foundation is solid"]
-      },
-      {
-        id: 8,
-        question: "Topic: 'Should high-growth tech startups deprioritize carbon footprints and climate impacts until they achieve profitability?'",
-        follow_up: "What are some highly actionable hosting adjustments a startup can make to cut server emissions?",
-        expected_points: ["Balances startup survival rates with ethical social footprint duties", "Discusses cloud providers that offset green power indexes vs budget server farms", "Mentions code-level computing efficiency directly reducing server CPU heating"]
-      }
-    ];
-  } else { // HR
+  } else { // HR & Behavioral Round
     return [
       {
         id: 1,

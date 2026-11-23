@@ -125,6 +125,67 @@ export function calculateIndependentReportsCount(evidenceList?: QuestionEvidence
   return distinctExperiences.size;
 }
 
+/**
+ * Calculates genuine 3-month and 6-month frequencies based on source timestamps.
+ * Anchors relative to current date or the latest timestamp in the reported corpus.
+ */
+export function calculateTimeFrequencies(evidenceList?: QuestionEvidence[]): { frequency3m: number; frequency6m: number } {
+  if (!evidenceList || evidenceList.length === 0) {
+    return { frequency3m: 0, frequency6m: 0 };
+  }
+
+  const now = Date.now();
+  const ms3Months = 90 * 24 * 60 * 60 * 1000;
+  const ms6Months = 180 * 24 * 60 * 60 * 1000;
+
+  // Deduplicate independent reports by experience_id or source_id or url
+  const seenReports = new Set<string>();
+  const deduplicatedDates: Array<{ interviewDate: number | null; publishedDate: number | null }> = [];
+
+  for (const e of evidenceList) {
+    const reportKey = e.experience_id || e.source_id || e.url || e.title;
+    if (reportKey && seenReports.has(reportKey)) continue;
+    if (reportKey) seenReports.add(reportKey);
+
+    const iTime = e.interview_date ? new Date(e.interview_date).getTime() : null;
+    const pTime = e.published_date ? new Date(e.published_date).getTime() : null;
+
+    const validITime = iTime && !isNaN(iTime) ? iTime : null;
+    const validPTime = pTime && !isNaN(pTime) ? pTime : null;
+
+    if (validITime !== null || validPTime !== null) {
+      deduplicatedDates.push({ interviewDate: validITime, publishedDate: validPTime });
+    }
+  }
+
+  if (deduplicatedDates.length === 0) {
+    return { frequency3m: 0, frequency6m: 0 };
+  }
+
+  let count3m = 0;
+  let count6m = 0;
+
+  for (const { interviewDate, publishedDate } of deduplicatedDates) {
+    // Prefer real interview date, fall back to publication date
+    const t = interviewDate !== null ? interviewDate : publishedDate;
+    if (t === null) continue;
+
+    const diff = now - t;
+    // Must be in the past (or present) and within 90 / 180 days relative to real current date
+    if (diff >= 0 && diff <= ms3Months) {
+      count3m++;
+    }
+    if (diff >= 0 && diff <= ms6Months) {
+      count6m++;
+    }
+  }
+
+  return {
+    frequency3m: count3m,
+    frequency6m: Math.max(count6m, count3m)
+  };
+}
+
 // ── 1. REAL, VERIFIED SOURCES (Genuinely accessible LeetCode, GFG & Official URLs) ───
 export const SEED_SOURCES: InterviewSource[] = [
   {
@@ -493,12 +554,12 @@ export const SEED_ROUNDS: CompanyInterviewRound[] = [
     round_name: 'Group Discussion',
     round_order: 5,
     description: 'Campus Placement Group Discussion: Corporate Technology Ethics, AI in Business, Remote Work Trade-offs',
-    evidence_summary: 'Standard evaluation in campus hiring cohorts to test communication and structured debate',
+    evidence_summary: 'Excluded from individual interview flow per technical specification',
     applicable_roles: ['Software Engineer', 'Campus Trainee'],
-    requires_gd: true,
+    requires_gd: false,
     requires_system_design: false,
     evaluation_focus: 'Communication clarity, collaborative listening, structured argumentation',
-    is_active: true
+    is_active: false
   },
   {
     id: 'rnd-tcs-hr',
@@ -1058,7 +1119,7 @@ export const SEED_QUESTIONS: NormalizedQuestionRecord[] = [
     difficulty: 'Medium',
     company: 'Amazon',
     role: 'Software Engineer',
-    problem_statement: 'An Amazon fulfillment center holds an array of existing parcel IDs parcels of length n. A delivery truck requires exactly k total unique parcel IDs ranging from 1 to infinity. Each parcel ID c costs exactly c dollars. Find the minimum total cost to add additional parcels so that the truck contains exactly k distinct parcel IDs.',
+    problem_statement: 'Write a program to solve the warehouse fulfillment parcel problem: An Amazon fulfillment center holds an array of existing parcel IDs parcels of length n. A delivery truck requires exactly k total unique parcel IDs ranging from 1 to infinity. Each parcel ID c costs exactly c dollars. Find the minimum total cost to add additional parcels so that the truck contains exactly k distinct parcel IDs.',
     what_we_look_for: 'Greedy selection of the lowest positive integers not in parcels. Using a Hash Set of existing parcels to check membership in O(1). Arithmetic sum formula optimization for large contiguous intervals.',
     follow_up_hint: 'How do you optimize to O(k) or O(n log n) without memory overflow when k is up to 10^9?',
     expected_depth: 'junior',
@@ -1619,11 +1680,89 @@ export function normalizeCompanyName(company: string): string {
   const norm = (company || '').toLowerCase().trim();
   if (norm.includes('amazon') || norm.includes('aws')) return 'Amazon';
   if (norm.includes('google') || norm.includes('alphabet')) return 'Google';
-  if (norm.includes('tcs') || norm.includes('tata')) return 'TCS';
+  if (norm === 'tcs' || norm.startsWith('tcs ') || norm.includes('tata consultancy')) return 'TCS';
   if (norm.includes('microsoft') || norm.includes('msft')) return 'Microsoft';
   if (norm.includes('meta') || norm.includes('facebook')) return 'Meta';
   if (norm.includes('infosys')) return 'Infosys';
   return company.trim();
+}
+
+/**
+ * Strictly determines the primary technical domain of an interview from the selected job role and JD first.
+ * Resume skills or keywords MUST NOT override the selected job role's primary technical domain.
+ */
+export type PrimaryJobDomain = 'civil' | 'mechanical' | 'electrical' | 'ece' | 'aiml' | 'software';
+
+export function resolveJobPrimaryDomain(
+  role?: string | null,
+  jobDescription?: string | null,
+  parsedResume?: any,
+  candidateSkills?: string | null
+): PrimaryJobDomain {
+  const roleNorm = (role || '').toLowerCase().trim();
+  const jdNorm = (jobDescription || '').toLowerCase().trim();
+  const roleAndJd = `${roleNorm} ${jdNorm}`;
+
+  // 1. Check explicit job role title FIRST (Highest Authority)
+  if (/\b(civil|structural|construction|site engineer|geotechnical|transportation|surveying|staad|etabs|rcc|bim)\b/i.test(roleNorm)) {
+    return 'civil';
+  }
+  if (/\b(mechanical|thermal|thermodynamics|fluid|hvac|automotive|manufacturing|solidworks|catia|ansys|fea|aerospace|gd&t|piping|mechatronics)\b/i.test(roleNorm)) {
+    return 'mechanical';
+  }
+  if (/\b(electrical|eee|transmission|t&d|t\s*&\s*d|substation|power systems|power electronics|switchgear|plc|scada|transformer|relay|high voltage|grid|distribution|generation)\b/i.test(roleNorm)) {
+    return 'electrical';
+  }
+  if (/\b(ece|electronics|embedded|vlsi|semiconductor|verilog|systemverilog|vhdl|fpga|asic|cmos|microcontroller|stm32|arm cortex|rtos|firmware|pcb|signal processing|telecom|rf)\b/i.test(roleNorm)) {
+    return 'ece';
+  }
+  if (/\b(ai|ml|machine learning|deep learning|data scientist|nlp|computer vision|llm|generative ai)\b/i.test(roleNorm)) {
+    return 'aiml';
+  }
+  if (/\b(software|sde|developer|frontend|backend|full[\s-]*stack|devops|cloud|data engineer|web|java|python|react|node|cse)\b/i.test(roleNorm)) {
+    return 'software';
+  }
+
+  // 2. Check Job Description if role title is generic (e.g. "Graduate Engineer Trainee", "Apprentice")
+  if (/\b(civil|structural|geotechnical|staad|etabs|reinforced concrete|is 456|foundation design)\b/i.test(jdNorm)) {
+    return 'civil';
+  }
+  if (/\b(mechanical|thermodynamics|solidworks|catia|ansys|hvac|gd&t|fluid mechanics)\b/i.test(jdNorm)) {
+    return 'mechanical';
+  }
+  if (/\b(electrical|transmission line|t&d|substation|power system|transformer|circuit breaker|switchgear|single[\s-]*line diagram|etap|relay coordination|ieee 80)\b/i.test(jdNorm)) {
+    return 'electrical';
+  }
+  if (/\b(ece|embedded|vlsi|semiconductor|cmos|verilog|fpga|asic|microcontroller|rtos|i2c|spi|uart|pcb)\b/i.test(jdNorm)) {
+    return 'ece';
+  }
+  if (/\b(machine learning|deep learning|pytorch|tensorflow|neural network|llm|rag)\b/i.test(jdNorm)) {
+    return 'aiml';
+  }
+  if (/\b(software|microservices|rest api|react|node\.js|data structures|algorithms|dbms|operating systems)\b/i.test(jdNorm)) {
+    return 'software';
+  }
+
+  // 3. Only if both role and JD are generic, inspect candidate resume education/headline/domain (never let a stray ML keyword override explicit degree/headline)
+  const eduText = Array.isArray(parsedResume?.education)
+    ? parsedResume.education.map((e: any) => `${e?.degree || ''} ${e?.field || ''}`).join(' ').toLowerCase()
+    : '';
+  const headlineText = `${parsedResume?.domain || ''} ${parsedResume?.headline || ''} ${parsedResume?.profile?.headline || ''} ${eduText}`.toLowerCase();
+
+  if (/\b(civil|structural)\b/i.test(headlineText)) return 'civil';
+  if (/\b(mechanical)\b/i.test(headlineText)) return 'mechanical';
+  if (/\b(electrical|eee|power)\b/i.test(headlineText)) return 'electrical';
+  if (/\b(ece|electronics|communication|vlsi|embedded)\b/i.test(headlineText)) return 'ece';
+  if (/\b(ai|ml|machine learning|data science)\b/i.test(headlineText)) return 'aiml';
+
+  const skillsText = `${candidateSkills || ''} ${Array.isArray(parsedResume?.skills) ? parsedResume.skills.map((s: any) => typeof s === 'string' ? s : s?.name || '').join(' ') : ''}`.toLowerCase();
+  if (/\b(staad|etabs|rcc|geotechnical)\b/i.test(skillsText)) return 'civil';
+  if (/\b(solidworks|catia|thermodynamics|gd&t)\b/i.test(skillsText)) return 'mechanical';
+  if (/\b(power systems|switchgear|etap|substation|transmission|transformer|single line diagram|plc|scada)\b/i.test(skillsText)) return 'electrical';
+  if (/\b(verilog|vlsi|fpga|cmos|embedded c|microcontroller|rtos)\b/i.test(skillsText)) return 'ece';
+  if (/\b(pytorch|tensorflow|deep learning)\b/i.test(skillsText)) return 'aiml';
+
+  return 'software';
 }
 
 /**
@@ -1640,32 +1779,317 @@ export async function getCompanyInterviewRounds(
   const roleNorm = (role || '').toLowerCase();
   const jdNorm = (jobDescription || '').toLowerCase();
 
-  if (isSupabaseConfigured) {
+  // Dynamic round construction based strictly on primary job domain (role & JD first)
+  const primaryDomain = resolveJobPrimaryDomain(role, jobDescription, parsedResume);
+  const isCivil = primaryDomain === 'civil';
+  const isMechanical = primaryDomain === 'mechanical';
+  const isAIML = primaryDomain === 'aiml';
+  const isECE = primaryDomain === 'ece';
+  const isElectrical = primaryDomain === 'electrical';
+  const isSoftware = primaryDomain === 'software';
+  const requiresProgramming = isSoftware || /\b(leetcode|algorithms|dsa|software engineer|full stack|frontend|backend)\b/i.test(`${roleNorm} ${jdNorm}`);
+
+  if (isSoftware && isSupabaseConfigured) {
     try {
       const { data, error } = await supabase
         .from('company_interview_rounds')
         .select('*')
         .eq('company', canonicalCompany)
+        .neq('round_name', 'Group Discussion')
         .order('round_order', { ascending: true });
 
       if (data && data.length > 0 && !error) {
-        return data as CompanyInterviewRound[];
+        return (data as CompanyInterviewRound[]).filter(r => !r.requires_gd && r.is_active !== false);
       }
     } catch (e) {}
   }
 
-  // Filter seed rounds matching company
-  const companyMatches = SEED_ROUNDS.filter(
-    r => r.company.toLowerCase() === canonicalCompany.toLowerCase()
-  );
+  // Filter seed rounds matching company only for software roles (strictly excluding Group Discussion)
+  if (isSoftware || requiresProgramming) {
+    const companyMatches = SEED_ROUNDS.filter(
+      r => r.company.toLowerCase() === canonicalCompany.toLowerCase() &&
+           r.round_name.toLowerCase() !== 'group discussion' &&
+           !r.requires_gd &&
+           r.is_active !== false
+    );
 
-  if (companyMatches.length > 0) {
-    return companyMatches.sort((a, b) => a.round_order - b.round_order);
+    if (companyMatches.length > 0) {
+      return companyMatches.sort((a, b) => a.round_order - b.round_order);
+    }
   }
 
-  // Dynamic round construction for other companies based on company, role, JD, and resume
+  // 1. Civil and Structural Engineering track (relevant engineering rounds)
+  if (isCivil && !requiresProgramming) {
+    return [
+      {
+        id: 'rnd-civil-1',
+        company: canonicalCompany,
+        role,
+        round_name: 'Civil and Structural Technical Fundamentals',
+        round_order: 1,
+        description: 'Core Civil & Structural Engineering: Statics, Strength of Materials, Shear Force & Bending Moments, Concrete & Steel mechanics',
+        evidence_summary: 'Role-based practice round for Civil & Structural Engineering candidates',
+        requires_gd: false,
+        requires_system_design: false,
+        is_active: true
+      },
+      {
+        id: 'rnd-civil-2',
+        company: canonicalCompany,
+        role,
+        round_name: 'Structural Design, Codes and Engineering Tools',
+        round_order: 2,
+        description: 'Building codes (IS 456 / Eurocode / ACI), limit state design, reinforcement detailing, and software workflows (STAAD.Pro, ETABS, AutoCAD, BIM)',
+        evidence_summary: 'Role-based practice round for Civil & Structural Engineering candidates',
+        requires_gd: false,
+        requires_system_design: false,
+        is_active: true
+      },
+      {
+        id: 'rnd-civil-3',
+        company: canonicalCompany,
+        role,
+        round_name: 'Project and Site Engineering Deep Dive',
+        round_order: 3,
+        description: 'Structural project defense, foundation engineering, site execution, quality control, and contractor coordination',
+        evidence_summary: 'Role-based practice round for Civil & Structural Engineering candidates',
+        requires_gd: false,
+        requires_system_design: false,
+        is_active: true
+      },
+      {
+        id: 'rnd-civil-4',
+        company: canonicalCompany,
+        role,
+        round_name: 'HR, Safety and Behavioral',
+        round_order: 4,
+        description: 'Site safety regulations (PPE, OSHA), environmental compliance, stakeholder communication, and ethical engineering judgment',
+        evidence_summary: 'Standard behavioral and professional ethics evaluation',
+        requires_gd: false,
+        requires_system_design: false,
+        is_active: true
+      }
+    ];
+  }
+
+  // 2. Mechanical Engineering track
+  if (isMechanical && !requiresProgramming) {
+    return [
+      {
+        id: 'rnd-mech-1',
+        company: canonicalCompany,
+        role,
+        round_name: 'Mechanical Engineering Fundamentals & Design',
+        round_order: 1,
+        description: 'Statics, Dynamics, Kinematics of Machinery, Material Science, Stress-Strain Analysis, and GD&T',
+        evidence_summary: 'Role-based practice round for Mechanical Engineering candidates',
+        requires_gd: false,
+        requires_system_design: false,
+        is_active: true
+      },
+      {
+        id: 'rnd-mech-2',
+        company: canonicalCompany,
+        role,
+        round_name: 'Thermal, Fluid & Materials Analysis',
+        round_order: 2,
+        description: 'Thermodynamics, Heat Transfer, Fluid Mechanics, HVAC, Pump sizing, and Finite Element Analysis (FEA/ANSYS)',
+        evidence_summary: 'Role-based practice round for Mechanical Engineering candidates',
+        requires_gd: false,
+        requires_system_design: false,
+        is_active: true
+      },
+      {
+        id: 'rnd-mech-3',
+        company: canonicalCompany,
+        role,
+        round_name: 'Manufacturing & Project Deep Dive',
+        round_order: 3,
+        description: 'CAD modeling (SolidWorks/CATIA), Design for Manufacturability (DFM/DFA), CNC machining, and project defense',
+        evidence_summary: 'Role-based practice round for Mechanical Engineering candidates',
+        requires_gd: false,
+        requires_system_design: false,
+        is_active: true
+      },
+      {
+        id: 'rnd-mech-4',
+        company: canonicalCompany,
+        role,
+        round_name: 'HR, Safety and Behavioral',
+        round_order: 4,
+        description: 'Plant safety, cross-functional collaboration with manufacturing, project deadlines, and teamwork',
+        evidence_summary: 'Standard behavioral and engineering ethics evaluation',
+        requires_gd: false,
+        requires_system_design: false,
+        is_active: true
+      }
+    ];
+  }
+
+  // 3A. ECE / Embedded Systems / VLSI track
+  if (isECE && !requiresProgramming) {
+    return [
+      {
+        id: 'rnd-ece-1',
+        company: canonicalCompany,
+        role,
+        round_name: 'Embedded Systems & Microcontroller Architecture',
+        round_order: 1,
+        description: 'Microcontrollers (ARM Cortex, STM32), Embedded C, Interrupts (ISRs), RTOS scheduling, and memory-mapped I/O',
+        evidence_summary: 'Role-based round for ECE & Embedded Systems candidates',
+        requires_gd: false,
+        requires_system_design: false,
+        is_active: true
+      },
+      {
+        id: 'rnd-ece-2',
+        company: canonicalCompany,
+        role,
+        round_name: 'Digital Electronics, VLSI & Communication Protocols',
+        round_order: 2,
+        description: 'I2C/SPI/UART/CAN bus timing, Verilog/FPGA design, setup & hold time, signal integrity, and PCB layout',
+        evidence_summary: 'Role-based round for ECE & Embedded Systems candidates',
+        requires_gd: false,
+        requires_system_design: false,
+        is_active: true
+      },
+      {
+        id: 'rnd-ece-3',
+        company: canonicalCompany,
+        role,
+        round_name: 'Hardware Project & Lab Troubleshooting Deep Dive',
+        round_order: 3,
+        description: 'Capstone project review, oscilloscope/logic analyzer debugging, thermal considerations, and testing methodologies',
+        evidence_summary: 'Role-based round for ECE & Embedded Systems candidates',
+        requires_gd: false,
+        requires_system_design: false,
+        is_active: true
+      },
+      {
+        id: 'rnd-ece-4',
+        company: canonicalCompany,
+        role,
+        round_name: 'HR, Safety and Behavioral',
+        round_order: 4,
+        description: 'Hardware lab safety protocols, ESD compliance, team problem solving, and accountability',
+        evidence_summary: 'Standard behavioral and hardware safety evaluation',
+        requires_gd: false,
+        requires_system_design: false,
+        is_active: true
+      }
+    ];
+  }
+
+  // 3B. Electrical & Power Systems (EEE) track
+  if (isElectrical && !requiresProgramming) {
+    return [
+      {
+        id: 'rnd-elec-1',
+        company: canonicalCompany,
+        role,
+        round_name: 'Power Systems, Electrical Machines & Circuit Analysis',
+        round_order: 1,
+        description: 'Three-phase power systems, transformers, induction/synchronous motors, load flow, and power factor correction',
+        evidence_summary: 'Role-based round for Electrical Engineering candidates',
+        requires_gd: false,
+        requires_system_design: false,
+        is_active: true
+      },
+      {
+        id: 'rnd-elec-2',
+        company: canonicalCompany,
+        role,
+        round_name: 'Protection Relays, Switchgear & PLC/SCADA Automation',
+        round_order: 2,
+        description: 'Single Line Diagrams (SLD), circuit breakers, relay coordination, PLC ladder logic, and SCADA monitoring',
+        evidence_summary: 'Role-based round for Electrical Engineering candidates',
+        requires_gd: false,
+        requires_system_design: false,
+        is_active: true
+      },
+      {
+        id: 'rnd-elec-3',
+        company: canonicalCompany,
+        role,
+        round_name: 'Electrical Design & Project Deep Dive',
+        round_order: 3,
+        description: 'ETAP/MATLAB Simulink modeling, cable sizing, earthing/grounding calculations, and project defense',
+        evidence_summary: 'Role-based round for Electrical Engineering candidates',
+        requires_gd: false,
+        requires_system_design: false,
+        is_active: true
+      },
+      {
+        id: 'rnd-elec-4',
+        company: canonicalCompany,
+        role,
+        round_name: 'HR, High-Voltage Safety and Behavioral',
+        round_order: 4,
+        description: 'Lockout/Tagout (LOTO), high-voltage substation safety standards, teamwork, and engineering ethics',
+        evidence_summary: 'Standard behavioral and electrical safety evaluation',
+        requires_gd: false,
+        requires_system_design: false,
+        is_active: true
+      }
+    ];
+  }
+
+  // 3C. Dedicated AI / Machine Learning Engineering track
+  if (isAIML) {
+    return [
+      {
+        id: 'rnd-aiml-1',
+        company: canonicalCompany,
+        role,
+        round_name: 'Machine Learning & Deep Learning Fundamentals',
+        round_order: 1,
+        description: 'Loss functions, backpropagation, regularization, gradient optimization, evaluation metrics (ROC-AUC, F1), and bias-variance trade-offs',
+        evidence_summary: 'Role-based round for AI/ML Engineering candidates',
+        requires_gd: false,
+        requires_system_design: false,
+        is_active: true
+      },
+      {
+        id: 'rnd-aiml-2',
+        company: canonicalCompany,
+        role,
+        round_name: 'Applied AI, Transformers & Model Optimization',
+        round_order: 2,
+        description: 'Transformer attention mechanics, RAG pipelines, vector databases, model quantization, latency tuning, and hallucination mitigation',
+        evidence_summary: 'Role-based round for AI/ML Engineering candidates',
+        requires_gd: false,
+        requires_system_design: false,
+        is_active: true
+      },
+      {
+        id: 'rnd-aiml-3',
+        company: canonicalCompany,
+        role,
+        round_name: 'AI/ML Project & Dataset Deep Dive',
+        round_order: 3,
+        description: 'Feature engineering, preventing data leakage, PyTorch/TensorFlow training pipelines, and MLOps model drift monitoring',
+        evidence_summary: 'Role-based round for AI/ML Engineering candidates',
+        requires_gd: false,
+        requires_system_design: false,
+        is_active: true
+      },
+      {
+        id: 'rnd-aiml-4',
+        company: canonicalCompany,
+        role,
+        round_name: 'HR & Behavioral',
+        round_order: 4,
+        description: 'AI safety & ethics, cross-functional collaboration, research-to-production ownership, and communication',
+        evidence_summary: 'Standard behavioral evaluation for AI/ML roles',
+        requires_gd: false,
+        requires_system_design: false,
+        is_active: true
+      }
+    ];
+  }
+
+  // 4. Software Engineering track (preserved for software roles)
   const isSenior = roleNorm.includes('senior') || roleNorm.includes('lead') || roleNorm.includes('staff') || jdNorm.includes('senior') || jdNorm.includes('architect');
-  const isAIML = roleNorm.includes('ai') || roleNorm.includes('ml') || roleNorm.includes('machine learning') || roleNorm.includes('data');
   const isCampus = roleNorm.includes('intern') || roleNorm.includes('trainee') || roleNorm.includes('fresher') || roleNorm.includes('campus');
 
   const dynamicRounds: CompanyInterviewRound[] = [
@@ -1719,8 +2143,8 @@ export async function getCompanyInterviewRounds(
     }
   ];
 
-  // Only include System Design if role is senior / SDE-2 / Architect or explicitly required in JD
-  if (isSenior || jdNorm.includes('system design') || jdNorm.includes('distributed systems') || (!isCampus && !roleNorm.includes('intern'))) {
+  // Only include System Design if role is senior / SDE-2 / Architect or explicitly required in JD, and not intern/apprentice
+  if (isSenior || jdNorm.includes('system design') || jdNorm.includes('distributed systems') || (!isCampus && !roleNorm.includes('intern') && !roleNorm.includes('apprentice'))) {
     dynamicRounds.push({
       id: 'rnd-dyn-lld',
       company: canonicalCompany,
@@ -1753,7 +2177,7 @@ export async function getCompanyInterviewRounds(
 }
 
 /**
- * Retrieve verified questions matching company, role, and round across all 8 supported interview rounds
+ * Retrieve verified questions matching company, role, and round across all supported interview rounds
  */
 export async function getVerifiedQuestionsForRound(
   company: string,
@@ -1762,21 +2186,32 @@ export async function getVerifiedQuestionsForRound(
 ): Promise<NormalizedQuestionRecord[]> {
   const canonicalCompany = normalizeCompanyName(company);
   const targetCategory = normalizeRoundCategory(roundName);
+  const rLower = (role || '').toLowerCase();
 
-  // First check exact company match for this round
-  const exactCompanyMatches = SEED_QUESTIONS.filter(
-    q => q.company.toLowerCase() === canonicalCompany.toLowerCase() &&
-         normalizeRoundCategory(q.round_type) === targetCategory
-  );
+  // First check exact company match for this round and ensure role compatibility
+  const exactCompanyMatches = SEED_QUESTIONS.filter(q => {
+    const compMatch = q.company.toLowerCase() === canonicalCompany.toLowerCase();
+    const roundMatch = normalizeRoundCategory(q.round_type) === targetCategory;
+    if (!compMatch || !roundMatch) return false;
+
+    // Check major domain compatibility if question specifies a role
+    if (q.role && rLower) {
+      const qRoleLower = q.role.toLowerCase();
+      const isCandidateSoftware = /software|developer|frontend|backend|fullstack|sde|coding|ai\/ml/i.test(rLower);
+      const isQuestionSoftware = /software|developer|frontend|backend|fullstack|sde|coding|ai\/ml/i.test(qRoleLower);
+      if (isCandidateSoftware !== isQuestionSoftware) return false;
+    }
+    return true;
+  });
+
+  // If verified questions exist for this exact company and role, return them
   if (exactCompanyMatches.length > 0) {
     return exactCompanyMatches;
   }
 
-  // Fallback: return verified questions for this round from standard seed repository
-  const roundMatches = SEED_QUESTIONS.filter(
-    q => normalizeRoundCategory(q.round_type) === targetCategory
-  );
-  return roundMatches;
+  // FIX 1: If no verified questions exist for the selected company and role, return empty array.
+  // NEVER fall back to Amazon/TCS seed questions for another company.
+  return [];
 }
 
 export async function seedNormalizedDatabaseIfEmpty(): Promise<void> {

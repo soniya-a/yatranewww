@@ -9,7 +9,7 @@ interface InterviewHeaderProps {
   totalQuestions: number;
   timeLeft: number;
   isLiveConnected?: boolean;
-  onEndInterview: () => void;
+  onEndInterview?: () => void;
 }
 
 export const InterviewHeader: React.FC<InterviewHeaderProps> = ({
@@ -18,8 +18,7 @@ export const InterviewHeader: React.FC<InterviewHeaderProps> = ({
   currentQuestionIndex,
   totalQuestions,
   timeLeft,
-  isLiveConnected = true,
-  onEndInterview
+  isLiveConnected = true
 }) => {
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -89,16 +88,6 @@ export const InterviewHeader: React.FC<InterviewHeaderProps> = ({
             "Loading Questions..."
           )}
         </div>
-
-        {/* End Interview Action */}
-        <button
-          onClick={onEndInterview}
-          className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 active:scale-95 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
-          title="Conclude Interview Session"
-        >
-          <PhoneOff className="w-3.5 h-3.5" />
-          <span>End Interview</span>
-        </button>
       </div>
     </header>
   );
